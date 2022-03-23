@@ -1,0 +1,758 @@
+---
+title: "Cube FFPE vs FF pilot"
+output: html_notebook
+---
+
+```{r}
+# pacman is a "package manager" that defines the p_load function.
+# p_load automatically installs a library if it is not already installed.
+# This often, but doesn't always, works.
+suppressPackageStartupMessages(library(pacman)) 
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(p_load(hdf5r))
+suppressPackageStartupMessages(p_load(ggplot2))
+suppressPackageStartupMessages(p_load(patchwork))
+suppressPackageStartupMessages(p_load(dplyr))
+suppressPackageStartupMessages(p_load(plyr))
+suppressPackageStartupMessages(p_load(cowplot))
+# suppressPackageStartupMessages(p_load(scales))
+suppressPackageStartupMessages(p_load(reshape2))
+suppressPackageStartupMessages(p_load(ggbeeswarm))
+# suppressPackageStartupMessages(library(devtools))
+# install_github("jokergoo/ComplexHeatmap")
+suppressPackageStartupMessages(p_load(ComplexHeatmap))
+# devtools::install_github("sjmgarnier/viridisLite")
+suppressPackageStartupMessages(library(viridisLite))
+suppressPackageStartupMessages(library(dendextend))
+# suppressPackageStartupMessages(p_load(CCA))
+# suppressPackageStartupMessages(p_load("sRDA"))
+suppressPackageStartupMessages(p_load(PMA))
+suppressPackageStartupMessages(p_load(ggpubr))
+suppressPackageStartupMessages(p_load(rstatix))
+suppressPackageStartupMessages(p_load(gtools))
+suppressPackageStartupMessages(p_load(DropletUtils)) # for downsampling count matrices
+suppressPackageStartupMessages(p_load(foreach))
+suppressPackageStartupMessages(p_load(parallel))
+suppressPackageStartupMessages(p_load(scran)) # for deconvolution-based normalization
+```
+
+
+Setup a parallel execution environment.
+
+```{r}
+num.cores <- detectCores()
+if(!is.na(num.cores) && (num.cores > 1)) {
+  suppressPackageStartupMessages(p_load("doMC"))
+  cat(paste("Registering ", num.cores-1, " cores.\n", sep=""))
+  registerDoMC(cores=(num.cores-1))
+}
+
+```
+
+Configure variables that point to location of images and directories where analyses and plots will be stored.
+
+```{r}
+long.dataset.names <- c('SC2200108_DT-21-4142-BR6526', 'SC2200109_DT-21-4142-BR6526', 'SC2200110_DT-21-4141-BR7212', 'SC2200111_DT-21-4141-BR7212')
+# Strip off everything past the "_" so that SC2200108_DT-21-4142-BR6526 -> SC2200108
+simple.dataset.names <- unlist(lapply(long.dataset.names, function(str) unlist(strsplit(str,split="_"))[1]))
+names(long.dataset.names) <- simple.dataset.names
+datasets <- simple.dataset.names
+names(datasets) <- datasets
+
+# Directory holding the raw data
+base_dir <- '/projects/compsci/whitebr/cancer-cube/qc-pilot/pdac/'
+spaceranger_dirs <- paste0(base_dir, long.dataset.names, "/spaceranger/")
+names(spaceranger_dirs) <- datasets
+
+# Define and create output results and plots directories
+analysis_dir <- paste0(base_dir, '/analysis/')
+dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
+plots_dir <- paste0(base_dir, '/plots/')
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Prefix for all output files (results and plots)
+analysis_file_prefix <- paste0("pdac-pilot-")
+```
+
+
+```{r}
+# A beast of a function that outputs many QC type plots.
+# Warning: probably you don't want to use this function, but rather create the individual plots (as done below)
+# For a given tissue represented by space.ranger.dir, this function outputs plots:
+# 1. *-cnts.png: shows the H&E image, the read counts of all spots, the read counts of only those spots covered by tissue.
+# 2. *-features.png: shows the spatial expression of several highly-expressed genes.
+# 3. *-meta.png: violin plots of number of UMI counts and of number of features/genes within spots covered by tissue or not covered by tissue ("background")
+# 4. *-top-features.png: boxplots of the expression of several highly-expressed genes both in tissue and background spots
+plot_spatial_expression <- function(space.ranger.dir, title, plot.prefix) {
+    raw.ds <- suppressWarnings(Load10X_Spatial(space.ranger.dir, filename = "raw_feature_bc_matrix.h5", filter.matrix = FALSE))
+    
+    filtered.ds <- suppressWarnings(Load10X_Spatial(space.ranger.dir, filename = "filtered_feature_bc_matrix.h5", filter.matrix = TRUE))
+    
+    df <- as.data.frame(raw.ds@meta.data)
+    df$sample <- rownames(df)
+    raw.meta <- melt(df[, c("sample", "nCount_Spatial", "nFeature_Spatial")], id.vars="sample")    
+    
+    df <- as.data.frame(filtered.ds@meta.data)
+    df$sample <- rownames(df)
+    filtered.meta <- melt(df[, c("sample", "nCount_Spatial", "nFeature_Spatial")], id.vars="sample")    
+    
+    background.meta <- subset(raw.meta, !(sample %in% filtered.meta$sample))
+    background.meta$type <- "background"
+    filtered.meta$type <- "tissue"
+    all.meta <- rbind(background.meta, filtered.meta)
+    g <- ggplot()
+    g <- g + geom_violin(data = all.meta, aes(x = type, y = value))
+    g <- g + scale_y_continuous(trans='log2')
+    # g <- g + geom_beeswarm(data = all.meta, aes(x = type, y = value))
+    g <- g + facet_wrap(~ variable, scales = "free_y")
+    g <- g + ggtitle(title) + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 20))
+    g <- g + ylab("Count") + xlab("Spot Location")
+    png(paste0(plot.prefix, "-meta.png"), width = 2 * 480)
+    print(suppressWarnings(g))
+    d <- dev.off()
+
+    pdf(paste0(plot.prefix, "-meta.pdf"), width = 2 * 7)
+    print(suppressWarnings(g))
+    d <- dev.off()
+
+         
+    raw.hne <- suppressWarnings(SpatialFeaturePlot(raw.ds, features = "nCount_Spatial", alpha = c(0,0)))
+    raw.hne <- raw.hne + ggtitle("H&E")
+    raw.hne <- raw.hne + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "none")
+    
+    raw.cnt <- suppressWarnings(SpatialFeaturePlot(raw.ds, features = "nCount_Spatial") )
+    raw.cnt <- raw.cnt + ggtitle("All spots")
+    raw.cnt <- raw.cnt + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
+    raw.cnt <- raw.cnt + suppressWarnings(scale_fill_gradientn(name = "count", labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100)))
+
+    filtered.cnt <- suppressWarnings(SpatialFeaturePlot(filtered.ds, features = "nCount_Spatial")) 
+    filtered.cnt <- filtered.cnt + ggtitle("Spots covering tissue")
+    filtered.cnt <- filtered.cnt + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
+    filtered.cnt <- filtered.cnt + suppressWarnings(scale_fill_gradientn(name = "count", labels = function(x) { sprintf("%.0fk", x/1000) }, colours = Seurat:::SpatialColors(n = 100)))
+  
+    g <- suppressWarnings(plot_grid(raw.hne, raw.cnt, filtered.cnt, labels = "AUTO", nrow = 1, align = "h", axis = "b"))
+    g.title <- ggdraw() + draw_label(title, fontface='bold')
+    g.all <- suppressWarnings(plot_grid(g.title, g, ncol=1, rel_heights=c(0.1, 1)))
+    
+    png(paste0(plot.prefix, "-cnts.png"), width = 2 * 480)
+    print(suppressWarnings(g.all))
+    d <- dev.off()
+    
+    # Total gene count / spot (across filtered and unfiltered)
+    # Remove reading from this file
+    # Plot counts of top 20 in both along with total gene count / spot
+    # Plot nfeatures and nreads
+    biomarkers <- c("VEGFA", "KIT", "KRT5", "KRT14", "KRT17", "TP53", "MKI67", "PARP1", "HSP90AA1")
+    biomarkers <- c("VEGFA", "KIT", "TP53", "MKI67")
+    top.genes <- c("MT-ND3", "RPL13")
+    
+    C = raw.ds@assays$Spatial@counts
+    C@x = C@x/rep.int(colSums(C), diff(C@p))
+    raw_most_expressed <- order(Matrix::rowSums(C), decreasing = T)[20:1]
+    raw.sub.matrix <- t(as.matrix(C[raw_most_expressed, ]))
+    top.raw.genes <- rownames(C)[rev(raw_most_expressed)]
+
+    C = filtered.ds@assays$Spatial@counts
+    C@x = C@x/rep.int(colSums(C), diff(C@p))
+    filtered_most_expressed <- order(Matrix::rowSums(C), decreasing = T)[20:1]
+    filtered.sub.matrix <- t(as.matrix(C[filtered_most_expressed, ]))
+    top.filtered.genes <- rownames(C)[rev(filtered_most_expressed)]
+
+    C = raw.ds@assays$Spatial@counts
+    C = C[, !(colnames(C) %in% colnames(filtered.ds@assays$Spatial@counts))]
+    C@x = C@x/rep.int(colSums(C), diff(C@p))
+    background_most_expressed <- order(Matrix::rowSums(C), decreasing = T)[20:1]
+    background.sub.matrix <- t(as.matrix(C[background_most_expressed, ]))
+    top.background.genes <- rownames(C)[rev(background_most_expressed)]
+    
+    top.raw.classes <- top.raw.genes
+    # Plot top 2 most expressed genes -- but only one of an IGH/K/L, MT, or RPL gene
+    top.raw.classes <- unlist(lapply(top.raw.classes, function(x) { sub(x=x, pattern="^IG.+", replacement="IG") } ))
+    top.raw.classes <- unlist(lapply(top.raw.classes, function(x) { sub(x=x, pattern="^MT.+", replacement="MT") } ))
+    top.raw.classes <- unlist(lapply(top.raw.classes, function(x) { sub(x=x, pattern="^RP.+", replacement="RP") } ))
+    top.raw.genes <- top.raw.genes[!duplicated(top.raw.classes)][1:2]
+    
+    top.filtered.classes <- top.filtered.genes
+    # Plot top 2 most expressed genes -- but only one of an IGH/K/L, MT, or RPL gene
+    top.filtered.classes <- unlist(lapply(top.filtered.classes, function(x) { sub(x=x, pattern="^IG.+", replacement="IG") } ))
+    top.filtered.classes <- unlist(lapply(top.filtered.classes, function(x) { sub(x=x, pattern="^MT.+", replacement="MT") } ))
+    top.filtered.classes <- unlist(lapply(top.filtered.classes, function(x) { sub(x=x, pattern="^RP.+", replacement="RP") } ))
+    top.filtered.genes <- top.filtered.genes[!duplicated(top.filtered.classes)][1:2]
+
+    top.background.classes <- top.background.genes
+    # Plot top 2 most expressed genes -- but only one of an IGH/K/L, MT, or RPL gene
+    top.background.classes <- unlist(lapply(top.background.classes, function(x) { sub(x=x, pattern="^IG.+", replacement="IG") } ))
+    top.background.classes <- unlist(lapply(top.background.classes, function(x) { sub(x=x, pattern="^MT.+", replacement="MT") } ))
+    top.background.classes <- unlist(lapply(top.background.classes, function(x) { sub(x=x, pattern="^RP.+", replacement="RP") } ))
+    top.background.genes <- top.background.genes[!duplicated(top.background.classes)][1:2]    
+    
+    features <- c("GAPDH", "ACTB", biomarkers, top.raw.genes)
+    g1s <- suppressWarnings(SpatialFeaturePlot(raw.ds, features = features, combine = FALSE))
+    g1s <- lapply(g1s, function(g) { g + theme(legend.text = element_text(size=8), legend.key.width = unit(0.5, 'cm'), legend.margin=margin(0,0,0,0), legend.box.margin=margin(-10,-10,-10,-10)) } )
+    g1s <- lapply(g1s, function(g) { suppressWarnings(g + scale_fill_gradientn(labels = function(x) { ifelse(x < 1000, x, sprintf('%.0fk', x/1000)) }, colours = Seurat:::SpatialColors(n = 100))) })
+    g1 <- suppressWarnings(plot_grid(plotlist = g1s))
+    g.title <- ggdraw() + draw_label("All spots")
+    g1 <- plot_grid(g.title, g1, ncol=1, rel_heights=c(0.1,1))
+    # g1 <- g1 + ggtitle("All spots")
+    # g1 <- g1 + theme(plot.title = element_text(hjust = 0.5))
+    
+    features <- c("GAPDH", "ACTB", biomarkers, top.filtered.genes)
+    g2s <- suppressWarnings(SpatialFeaturePlot(filtered.ds, features = features, combine = FALSE))
+    g2s <- lapply(g2s, function(g) { g + theme(legend.text = element_text(size=8), legend.key.width = unit(0.5, 'cm'), legend.margin=margin(0,0,0,0), legend.box.margin=margin(-10,-10,-10,-10)) } )
+    g2s <- lapply(g2s, function(g) { suppressWarnings(g + scale_fill_gradientn(labels = function(x) { ifelse(x < 1000, x, sprintf('%.0fk', x/1000)) }, colours = Seurat:::SpatialColors(n = 100))) })
+    g2 <- plot_grid(plotlist = g2s)
+    g.title <- ggdraw() + draw_label("Spots covering tissue")
+    g2 <- suppressWarnings(plot_grid(g.title, g2, ncol=1, rel_heights=c(0.1,1)))
+    # g2 <- g2 + ggtitle("Spots covering tissue")
+    # g2 <- g2 + theme(plot.title = element_text(hjust = 0.5))
+                     
+    g <- plot_grid(g1, g2, labels = "AUTO", nrow = 1, align = "h", axis = "b")
+    g.title <- ggdraw() + draw_label(title, fontface='bold')
+    g.all <- suppressWarnings(plot_grid(g.title, g, ncol=1, rel_heights=c(0.1, 1)))
+    
+    png(paste0(plot.prefix, "-features.png"), width = 2 * 480)
+    print(g.all)
+    d <- dev.off()
+
+    df <- melt(background.sub.matrix)
+    colnames(df) <- c("sample", "gene", "value")
+    df$gene <- factor(df$gene, levels = colnames(background.sub.matrix))
+    print(dim(background.sub.matrix))
+    print(unique(df$gene))
+    g1 <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = value), fill = (scales::hue_pal())(20)[20:1]) + coord_flip()
+    g1 <- g1 + ylab("% total count per cell") + xlab("")
+    g1 <- g1 + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
+    g1 <- g1 + ggtitle("Background spots")
+    
+    df <- melt(filtered.sub.matrix)
+    colnames(df) <- c("sample", "gene", "value")
+    df$gene <- factor(df$gene, levels = colnames(filtered.sub.matrix))
+    g2 <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = value), fill = (scales::hue_pal())(20)[20:1]) + coord_flip()
+    g2 <- g2 + ylab("% total count per cell") + xlab("")
+    g2 <- g2 + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
+    g2 <- g2 + ggtitle("Spots covering tissue")
+
+    g <- plot_grid(g1, g2, labels = "AUTO", nrow = 1, align = "h", axis = "b")
+    g.title <- ggdraw() + draw_label(title, fontface='bold')
+    g.all <- suppressWarnings(plot_grid(g.title, g, ncol=1, rel_heights=c(0.1, 1)))
+    
+    png(paste0(plot.prefix, "-top-features.png"), width = 2 * 480)
+    print(g.all)
+    d <- dev.off()
+
+}
+```
+
+
+```{r}
+#for (ds in datasets) {
+#    plot_spatial_expression(paste0(base_dir, ds, "/", "spaceranger"), title = ds, paste0(analysis_dir, ds))
+#}
+```
+
+```{r}
+#' Get the position information for each spot in a tissue
+#' 
+#' A function that extracts spot position information from the spaceranger output corresponding to 
+#' a single tissue. See https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/images
+#' for a full description.
+#'
+#' @param spaceranger_dir The path to the spaceranger output.
+#' @return A data.frame with columns:
+#'  barcode: The sequence of the barcode associated to the spot.
+#'  in_tissue: Binary, indicating if the spot falls inside (1) or outside (0) of tissue.
+#'  array_row: The row coordinate of the spot in the array from 0 to 77. The array has 78 rows.
+#'  array_col: The column coordinate of the spot in the array. In order to express the orange crate arrangement of the spots, this column index uses even numbers from 0 to 126 for even rows, and odd numbers from 1 to 127 for odd rows. Notice then that each row (even or odd) has 64 spots.
+#'  pxl_row_in_fullres: The row pixel coordinate of the center of the spot in the full resolution image.
+#'  pxl_col_in_fullres: The column pixel coordinate of the center of the spot in the full resolution image.
+get.tissue.position.metadata <- function(spaceranger_dir) {
+  image.dir <- paste0(spaceranger_dir, "/", "spatial/")
+  tissue.positions <- 
+    read.csv(file = file.path(image.dir, "tissue_positions_list.csv"), 
+             col.names = c("barcodes", "tissue", "row", "col", "imagerow", "imagecol"), header = FALSE, 
+             as.is = TRUE, row.names = 1)
+  tissue.positions
+}
+```
+
+
+```{r}
+# Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
+filtered.objs <- 
+  llply(datasets, 
+        .fun = function(dataset) {
+          # NB: here loading filtered_feature_bc_matrix.h5 with filter.matrix = TRUE
+          # filtered_feature_bc_matrix.h5 should only contain data from spots overlaying tissue,
+          # though I can't find this documented conclusively.
+          # filter.matrix = TRUE definitely filteres coordinates in the Seurat object
+          # according to those that overlap the tissue (i.e., have tissue == 1 in the
+          # tissue_positions_list.csv file -- see code for Read10X_Image, which is called
+          # by Load10X_Spatial)
+          
+          # See this issue for how to set up these individual objects such that we can merge them:
+          # https://github.com/satijalab/seurat/issues/3732
+          # Namely, set the slice and then the orig.ident
+          obj <- Seurat::Load10X_Spatial(spaceranger_dirs[[dataset]], filename = 'filtered_feature_bc_matrix.h5', filter.matrix = TRUE, slice = dataset)
+          obj$orig.ident <- dataset
+          tissue.positions <- get.tissue.position.metadata(spaceranger_dirs[[dataset]])
+          tissue.positions$spot_type <- "background"
+          tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
+          obj <- AddMetaData(obj, tissue.positions)
+          obj
+        })
+
+unfiltered.objs <- 
+  llply(datasets, 
+        .fun = function(dataset) {
+          # NB: here loading raw_feature_bc_matrix.h5 with filter.matrix = FALSE
+          obj <- Seurat::Load10X_Spatial(spaceranger_dirs[[dataset]], filename = 'raw_feature_bc_matrix.h5', filter.matrix = FALSE, slice = dataset)
+          obj$orig.ident <- dataset
+          tissue.positions <- get.tissue.position.metadata(spaceranger_dirs[[dataset]])
+          tissue.positions$spot_type <- "background"
+          tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
+          obj <- AddMetaData(obj, tissue.positions)
+          obj
+        })
+
+        
+```
+
+```{r}
+# Merge the unfiltered objs into one Seurat object
+all.unfiltered.objs <- Reduce(merge, unfiltered.objs)
+Idents(all.unfiltered.objs) <- all.unfiltered.objs$orig.ident
+```
+
+```{r}
+# Add simplified sample names
+sample.name.df <- data.frame(all.unfiltered.objs@meta.data[, c("orig.ident"), drop = FALSE])
+sample.name.df$sample.name <- unlist(lapply(sample.name.df$orig.ident, function(str) unlist(strsplit(str, split="_"))[1]))
+all.unfiltered.objs <- AddMetaData(all.unfiltered.objs, sample.name.df[, c("sample.name"), drop = FALSE])
+```
+
+
+```{r}
+#' Create a spatial feature plot
+#' 
+#' A convenience function that wraps Seurat's SpatialFeaturePlot to add a centered title and a legend at the bottom.
+#'
+#' @param obj A Seurat object.
+#' @param features A vector of strings listing one or more features to plot.
+#' @param legend.name A string name for the legend
+#' @return a ggplot
+plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count") {
+  g <- suppressWarnings(SpatialFeaturePlot(obj, features = features) )
+  # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
+  g <- g + suppressWarnings(scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100)))
+  g
+}
+```
+
+```{r}
+#' Create a plot of the raw H&E image
+#' 
+#' A convenience function that wraps Seurat's SpatialFeaturePlot to plot only the overlaid H&E image and not the spots.
+#'
+#' @param obj A Seurat object.
+#' @return a ggplot
+plot.hne <- function(obj) {
+  # Set the opacity/alpha to 0 so that we only see the H&E image.
+  g <- suppressWarnings(SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0)))
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "none")
+  g
+}
+```
+
+
+```{r}
+#' Add a title to a cowplot
+#' 
+#' A convenience function that adds a panel with a title above an existing figure.
+#'
+#' @param g A ggplot.
+#' @param title A string title.
+#' @param size Size of title text.
+#' @return A ggplot
+add.title.to.plot <- function(g, title, size = 14) {
+  g.title <- ggdraw() +  draw_label(title, size = size)
+  g <- cowplot::plot_grid(title = g.title, g, nrow=2, rel_heights=c(0.1,1))
+  g
+}
+```
+
+
+```{r}
+# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png.png)
+unfiltered.count.plots <-
+  llply(datasets,
+        .fun = function(dataset) {
+          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nCount_Spatial"), legend.name = "Count")
+          g <- g + ggtitle(dataset)
+          g
+        })
+g.all <- plot_grid(plotlist = unfiltered.count.plots)
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-counts.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+# Plot the number of feature counts per spot for unfiltered data (in files *unfiltered-spot-features.png)
+unfiltered.feature.plots <-
+  llply(datasets,
+        .fun = function(dataset) {
+          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nFeature_Spatial"), legend.name = "Feature")
+          g <- g + ggtitle(dataset)
+          g
+        })
+g.all <- plot_grid(plotlist = unfiltered.feature.plots)
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-features.png"))
+print(g.all)
+d <- dev.off()
+```
+```{r}
+# Plot the raw H&E images (in files *hne.png)
+hne.plots <-
+  llply(datasets,
+        .fun = function(dataset) {
+          g <- plot.hne(unfiltered.objs[[dataset]])
+          g <- g + ggtitle(dataset)
+          g
+        })
+g.all <- plot_grid(plotlist = hne.plots)
+g.all <- add.title.to.plot(g.all, "Raw H&E")
+png(paste0(plots_dir, "/", analysis_file_prefix, "hne.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+#' Plot distribution of a response variable (e.g., UMI count) across spots relative to a dependent variable (e.g., tissue vs background spot status)
+#' 
+#' Create violin/boxplots showing distribution across spots of a user-specified response variable relative to a dependent variable and facted by sample.
+#'
+#' @param df A data.frame holding the response, depenndent, and faceting variables.
+#' @param response.var The variable whose distribution over spots will be plotted.
+#' @param facet.var The faceting variable.
+#' @param dependent.var The variable that the response variable will be plotted as a function of.
+#' @return A ggplot
+plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial", facet.var = "sample.name", dependent.var = "spot_type") {
+  stat.test <- tbl %>% group_by_at(facet.var) %>% wilcox_test(as.formula(paste0(response.var, " ~ ", dependent.var)), p.adjust.method = "none")
+  stat.test$p.adj <- p.adjust(stat.test$p, method = "bonferroni")
+  stat.test <- stat.test %>% add_xy_position(x = dependent.var)
+  stat.test$y.position <- log2(stat.test$y.position)
+  stat.test$label <- stars.pval(stat.test$p.adj)
+
+  g <- ggviolin(tbl, dependent.var, response.var, facet.by = facet.var, add = "boxplot")
+  g <- g + yscale("log2") + stat_pvalue_manual(stat.test, label="label") + xlab("Spot Type")
+  g
+}
+```
+
+
+```{r}
+# Plot the distribution of UMI counts and gene counts over spots, as a function of whether those spots and within the tissue or outside of it (in file *count-and-feature-dist.png)
+tbl <- all.unfiltered.objs@meta.data
+g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial") + ylab("UMI Counts (log2)")
+g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial") + ylab("Feature Counts (log2)")
+g <- plot_grid(g.cnt, g.feature, nrow=1, labels = "AUTO")
+png(paste0(plots_dir, "/", analysis_file_prefix, "count-and-feature-dist.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+
+```
+```{r}
+#' Return count matrix from a Seurat object
+#' 
+#' @param obj A Seurat object.
+#' @return A (sparse) matrix holding the spot counts (i.e., from the "counts" slot)
+get.count.matrix <- function(obj) {
+  as.matrix(x = GetAssayData(object = obj, assay = "Spatial", slot = "counts"))
+}
+
+#' Downsample each column of a matrix to a desired total count.
+#'
+#' A function that, independently for each column/cell, uses a multinomial distribution, parameterized 
+#' by the frequency of each gene within that column/cell and the desired total count, to sample a vector of gene counts.
+#' This is in contrast to related functions such as SampleUMI (in Seurat), which applies a binomial to each gene (!?)
+#' and thus only approximates the desired total count, and downsampleMatrix (in DropletUtils), which downsamples to
+#' a fraction of the original number of reads.
+#'
+#' @param expr_mat A (possibly sparse) matrix of counts.
+#' @param tot_cnt The desired number of counts _for each column_
+#' @return A downsample matrix
+downsample.matrix <- function (expr_mat, tot_cnt) 
+{
+    down_sample <- function(x) {
+        prob <- x/sum(x)
+        return(rmultinom(1, tot_cnt, prob))
+    }
+    down_sampled_mat <- apply(expr_mat, 2, down_sample)
+    return(down_sampled_mat)
+}
+
+#' Compute the number of expressed genes/features in a downsampled matrix.
+#' 
+#' A function to downsample the input matrix such that each cell/column has tot_cnt reads and
+#' that reports the _median_ (across cells/columns) number of genes/features with non-zero counts.
+#'
+#' @param expr_mat A (possibly sparse) matrix of counts.
+#' @param tot_cnt The desired number of counts _for each column_
+#' @return The median (across cells/columns) number of genes/features with non-zero counts in the downsampled matrix.
+compute.num.features.at.total.reads <- function(expr_mat, tot_cnt) {
+  ds <- downsample.matrix(expr_mat, tot_cnt)
+  return(median(colSums(ds > 0)))
+}
+```
+
+```{r}
+# Calculate the median number of reads (across spots) for each sample
+# NB: using filtered data here
+median.num.reads <- llply(filtered.objs, .fun = function(obj) median(colSums(get.count.matrix(obj))))
+```
+
+```{r}
+# Perform a sensitivity analysis -- i.e., show the number of detected genes/features as a function
+# of total UMI counts per spot. More precisely, we will plot the median (across spots) number of
+# detected genes vs the median (across spots) UMI count.
+
+all.downsample.cnts <- round(seq(from=0.1,to=0.9,by=0.1)*max(unlist(median.num.reads)))
+names(all.downsample.cnts) <- all.downsample.cnts
+downsample.feature.df <-
+  ldply(filtered.objs,
+        .parallel = FALSE,
+        .fun = function(obj) {
+          expr_mat <- get.count.matrix(obj)
+          median.cnts <- median(colSums(expr_mat))
+          downsample.cnts <- all.downsample.cnts[all.downsample.cnts < median.cnts]
+          tbl <- 
+            ldply(downsample.cnts, .parallel = TRUE,
+                  .fun = function(tot_cnt) {
+                    data.frame(num.features = compute.num.features.at.total.reads(expr_mat, tot_cnt))
+                  })
+          colnames(tbl)[1] <- "downsample.count"
+          tbl
+        })
+colnames(downsample.feature.df)[1] <- "sample.name" 
+downsample.feature.df$downsample.count <- as.numeric(downsample.feature.df$downsample.count)
+```
+
+```{r}
+# Plot the sensitivity (# of detected genes/features vs # of reads; in file *num-features-vs-num-downsampled-reads.png)
+g <- ggplot(downsample.feature.df, aes(x = downsample.count, y = num.features, colour = sample.name))
+g <- g + geom_point()
+g <- g + xlab("Spot Read Count (Median)") + ylab("Spot Feature Count (Median)")
+g <- g + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", analysis_file_prefix, "num-features-vs-num-downsampled-reads.png"))
+print(g)
+d <- dev.off()
+            
+```
+
+
+```{r}
+#' Return most highly-expressed genes
+#' 
+#' A function to return the most highly-expressed genes (i.e., those with highest value) from a matrix.
+#'
+#' @param mat A (sparse) matrix.
+#' @param n.top The number of genes to return.
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A vector of the highest-expressed genes.
+get.top.genes.matrix <- function(mat, n.top = 20, assay = "Spatial", slot = "data") {
+  rs <- rowSums(mat)
+  rs <- rs[order(rs, decreasing=TRUE)]
+  top.genes <- names(rs)[1:n.top]
+  top.genes
+}
+
+#' Return most highly-expressed genes
+#' 
+#' A function to return the most highly-expressed genes (i.e., those with highest value) from a Seurat assay.
+#'
+#' @param obj A Seurat object.
+#' @param n.top The number of genes to return.
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A vector of the highest-expressed genes.
+get.top.genes <- function(obj, n.top = 20, assay = "Spatial", slot = "data") {
+  mat <- GetAssayData(obj, assay = assay, slot = slot)
+  get.top.genes.matrix(mat, n.top = n.top, assay = assay, slot = slot)
+}
+
+#' Return data subsetted by spot tissue status
+#' 
+#' A function to return the subset of the data corresponding to spots that are (or are not) in the tissue
+#'
+#' @param obj A Seurat object.
+#' @param tissue.val Spots with tissue.val for the tissue.col metadata field will be retained.
+#' @param tissue.col The metadata column of the Seurat object holding the tissue status
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A (sparse) matrix of spots that are (or are not) in tissue
+subset.matrix.based.on.tissue.status <- function(obj, tissue.val, tissue.col = "tissue", assay = "Spatial", slot = "data") {
+  cell.subset <- rownames((obj@meta.data)[(obj@meta.data)[,tissue.col] == tissue.val,])
+  mat <- GetAssayData(obj, assay = assay, slot = slot)
+  mat[,cell.subset]
+}
+```
+
+```{r}
+plot.top.genes <- function(mat, n.top = 20, highlight.genes = NULL) {
+  mat <- sweep(mat, 2, colSums(mat), "/")
+  top.genes <- get.top.genes.matrix(mat, n.top = n.top)
+  df <- melt(mat[top.genes,])
+  colnames(df) <- c("gene", "spot", "value")
+  df$gene <- factor(df$gene, levels = rev(top.genes))
+  g <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = 100 * value), fill = (scales::hue_pal())(n.top)[n.top:1]) + coord_flip()
+  g <- g + ylab("% total count per cell") + xlab("")
+  g <- g + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
+  if(!is.null(highlight.genes)) {
+    vec_fontface <- ifelse(levels(df$gene) %in% highlight.genes,"bold","plain")
+    g <- g + theme(axis.text.y=element_text(face=vec_fontface))
+  }
+  g
+}
+```
+
+
+```{r}
+# Get the most prevalent genes expressed in the background ...
+top.genes.background <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          mat <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          mat <- sweep(mat, 2, colSums(mat), "/")
+          top.genes <- get.top.genes.matrix(mat, n.top = 20)
+          top.genes
+        })
+
+# ... and in the tissue
+top.genes.tissue <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          mat <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          mat <- sweep(mat, 2, colSums(mat), "/")
+          top.genes <- get.top.genes.matrix(mat, n.top = 20)
+          top.genes
+        })
+
+```
+
+```{r}
+# Find genes that are common between the (union of) background genes and the (union of) tissue genes
+all.background.genes <- unique(Reduce("c", top.genes.background))
+all.tissue.genes <- unique(Reduce("c", top.genes.tissue))
+common.genes <- intersect(all.background.genes, all.tissue.genes)
+```
+
+
+```{r}
+# Create plots showing the top 20 most prevalent genes in the background -- highlighting (in bold) the
+# genes that are common to the background and tissue
+top.genes.background.plts <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          background.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = common.genes)
+          g <- g + ggtitle(data.set)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.background.plts)
+g.all <- add.title.to.plot(g.all, "Background Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-background-spot.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Do the same for spots in the tissue
+top.genes.tissue.plts <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = common.genes)
+          g <- g + ggtitle(data.set)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.tissue.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+```
+
+
+```{r}
+# Perform normalization of counts using SCTransform (which fits a negative binomial to the count data)
+# This adds a new assay "SCT" to the returned Seurat object. That assay has slots "counts" (the corrected counts),
+# "data" (log1p(counts)), and "scale.data" (the "pearson residuals").
+# These would be accessible via GetAssayData(filtered.objs[[1]], slot = "data", assay = "SCT")
+# Running with default parameters (the most interesting of which look to be variable.features.n and/or variable.features.rv.th)
+filtered.objs <-
+  llply(filtered.objs,
+        .fun = function(obj) SCTransform(obj, assay = "Spatial", verbose = FALSE))
+```
+
+```{r}
+# Also apply scran deconvolution-based normalization.
+# scran uses SingleCellExperiment objects, so we will have to convert back and forth between SCEs and Seurat objects.
+# See notes on interoperability here: https://satijalab.org/seurat/archive/v3.1/conversion_vignette.html
+
+filtered.objs <-
+  llply(filtered.objs, .parallel = FALSE,
+        .fun = function(obj) {
+          
+          # Convert from a Seurat object to a SingleCellExperiment
+          sce <- as.SingleCellExperiment(obj, assay = "Spatial")
+
+          
+          # Perform the scran normalization (see https://bioconductor.org/packages/devel/bioc/vignettes/scran/inst/doc/scran.html)
+          clusters <- quickCluster(sce)
+          sce <- computeSumFactors(sce, clusters=clusters)
+          sce <- logNormCounts(sce)
+          
+          # Convert back from SingleCellExperiment to Seurat object. 
+          tmp <- as.Seurat(sce, counts = "counts", data = "logcounts", assay="scran")
+          obj[["scran"]] <- tmp[["scran"]]
+          obj
+        })
+          
+```
+
+```{r}
+# Are the two normalizations similar? Compute their correlations -- 
+# i.e., the correlation of the Seurat-normalized gene expression vector for cell i 
+# against the scran-normalized gene expression vector for cell i.
+calculate.cell.cell.correlation <- function(expr_mat1, expr_mat2) {
+  n.cells <- ncol(expr_mat1)
+  common.rows <- intersect(rownames(expr_mat1), rownames(expr_mat2))
+  expr_mat1 <- expr_mat1[common.rows,]
+  expr_mat2 <- expr_mat2[common.rows,]
+  cors <- 
+    unlist(lapply(1:n.cells,
+           function(i) {
+             c1i <- expr_mat1[,i]
+             c2i <- expr_mat2[,i]
+             nz <- (c1i != 0) | (c2i != 0)
+             cor(c1i[nz], c2i[nz])
+           }))
+  cors
+}
+```
+
+```{r}
+all.cors <- llply(datasets, 
+                  .fun = function(ds) { 
+                    m1 <- as.matrix(GetAssayData(filtered.objs[[ds]], assay="SCT", slot="data"))
+                    m2 <- as.matrix(GetAssayData(filtered.objs[[ds]], assay="scran", slot="data"))
+                    calculate.cell.cell.correlation(m1, m2) 
+                  })
+```
+
