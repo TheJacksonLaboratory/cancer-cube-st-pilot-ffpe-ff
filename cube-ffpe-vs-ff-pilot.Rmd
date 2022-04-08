@@ -34,6 +34,7 @@ suppressPackageStartupMessages(p_load(DropletUtils)) # for downsampling count ma
 suppressPackageStartupMessages(p_load(foreach))
 suppressPackageStartupMessages(p_load(parallel))
 suppressPackageStartupMessages(p_load(scran)) # for deconvolution-based normalization
+suppressPackageStartupMessages(p_load(scuttle)) # for deconvolution-based normalization
 ```
 
 
@@ -52,12 +53,22 @@ if(!is.na(num.cores) && (num.cores > 1)) {
 Configure variables that point to location of images and directories where analyses and plots will be stored.
 
 ```{r}
-long.dataset.names <- c('SC2200108_DT-21-4142-BR6526', 'SC2200109_DT-21-4142-BR6526', 'SC2200110_DT-21-4141-BR7212', 'SC2200111_DT-21-4141-BR7212')
-# Strip off everything past the "_" so that SC2200108_DT-21-4142-BR6526 -> SC2200108
-simple.dataset.names <- unlist(lapply(long.dataset.names, function(str) unlist(strsplit(str,split="_"))[1]))
-names(long.dataset.names) <- simple.dataset.names
-datasets <- simple.dataset.names
+#dataset.labels <- list('SC2200108_DT-21-4142-BR6526' = 'FFPE', 'SC2200109_DT-21-4142-BR6526' = 'FFPE', 'SC2200110_DT-21-4141-BR7212' = 'FFPE', 'SC2200111_DT-21-4141-BR7212' = 'FFPE', 'SC2200104_BR6526' = 'Frozen')
+# long.dataset.names <- c('SC2200108_DT-21-4142-BR6526', 'SC2200109_DT-21-4142-BR6526', 'SC2200110_DT-21-4141-BR7212', 'SC2200111_DT-21-4141-BR7212', 'SC2200104_BR6526')
+# long.dataset.names <- c('SC2200104_BR6526')
+# long.dataset.names <- names(dataset.labels)
+long.dataset.names <- list('BR6526-108' = 'SC2200108_DT-21-4142-BR6526', 'BR6526-109' = 'SC2200109_DT-21-4142-BR6526', 'BR7212-110' = 'SC2200110_DT-21-4141-BR7212', 'BR7212-111' = 'SC2200111_DT-21-4141-BR7212', 'BR6526-104' = 'SC2200104_BR6526')
+dataset.labels <- list('BR6526-108' = 'FFPE', 'BR6526-109' = 'FFPE', 'BR7212-110' = 'FFPE', 'BR7212-111' = 'FFPE', 'BR6526-104' = 'Frozen')
+dataset.metadata.df <- data.frame(sample.name = names(dataset.labels), type = unlist(unname(dataset.labels)))
+
+# # Strip off everything past the "_" so that SC2200108_DT-21-4142-BR6526 -> SC2200108
+# simple.dataset.names <- unlist(lapply(long.dataset.names, function(str) unlist(strsplit(str,split="_"))[1]))
+#names(long.dataset.names) <- simple.dataset.names
+#names(dataset.labels) <- simple.dataset.names
+#datasets <- simple.dataset.names
+datasets <- names(long.dataset.names)
 names(datasets) <- datasets
+ffpe.datasets <- datasets[dataset.labels == "FFPE"]
 
 # Directory holding the raw data
 base_dir <- '/projects/compsci/whitebr/cancer-cube/qc-pilot/pdac/'
@@ -356,10 +367,20 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
 #'
 #' @param obj A Seurat object.
 #' @return a ggplot
-plot.hne <- function(obj) {
+plot.hne <- function(obj, keep.invisible.legend = FALSE) {
   # Set the opacity/alpha to 0 so that we only see the H&E image.
   g <- suppressWarnings(SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0)))
-  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "none")
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15))
+  if(keep.invisible.legend) {
+    g <- g + theme(legend.position = "bottom") 
+    g <- g + theme(legend.title = element_text(color = "transparent"), legend.text = element_text(color = "transparent"))
+    # g <- g + scale_fill_continuous(fill = guide_legend(override.aes = list(alpha = 1)))
+    # g <- g + scale_fill_gradientn(colors = brewer.pal(10,"Spectral"), guide = guide_legend(override.aes = list(alpha = 1)))
+    # g <- g + guides(fill = guide_legend(override.aes = list(alpha = 1)))
+    g <- g + scale_fill_gradientn(colours = c("white"))
+  } else {
+    g <- g + theme(legend.position = "none")
+  }
   g
 }
 ```
@@ -388,7 +409,8 @@ unfiltered.count.plots <-
   llply(datasets,
         .fun = function(dataset) {
           g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nCount_Spatial"), legend.name = "Count")
-          g <- g + ggtitle(dataset)
+          title <- paste0(dataset, "\n", dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
           g
         })
 g.all <- plot_grid(plotlist = unfiltered.count.plots)
@@ -404,7 +426,8 @@ unfiltered.feature.plots <-
   llply(datasets,
         .fun = function(dataset) {
           g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nFeature_Spatial"), legend.name = "Feature")
-          g <- g + ggtitle(dataset)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
           g
         })
 g.all <- plot_grid(plotlist = unfiltered.feature.plots)
@@ -418,8 +441,9 @@ d <- dev.off()
 hne.plots <-
   llply(datasets,
         .fun = function(dataset) {
-          g <- plot.hne(unfiltered.objs[[dataset]])
-          g <- g + ggtitle(dataset)
+          g <- plot.hne(unfiltered.objs[[dataset]], keep.invisible.legend = TRUE)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
           g
         })
 g.all <- plot_grid(plotlist = hne.plots)
@@ -440,13 +464,14 @@ d <- dev.off()
 #' @param dependent.var The variable that the response variable will be plotted as a function of.
 #' @return A ggplot
 plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial", facet.var = "sample.name", dependent.var = "spot_type") {
-  stat.test <- tbl %>% group_by_at(facet.var) %>% wilcox_test(as.formula(paste0(response.var, " ~ ", dependent.var)), p.adjust.method = "none")
+  lvls <- unique(df[, facet.var, drop=TRUE])
+  df[,facet.var] <- factor(df[,facet.var], levels=lvls)
+  stat.test <- df %>% group_by_at(facet.var) %>% wilcox_test(as.formula(paste0(response.var, " ~ ", dependent.var)), p.adjust.method = "none")
   stat.test$p.adj <- p.adjust(stat.test$p, method = "bonferroni")
   stat.test <- stat.test %>% add_xy_position(x = dependent.var)
   stat.test$y.position <- log2(stat.test$y.position)
   stat.test$label <- stars.pval(stat.test$p.adj)
-
-  g <- ggviolin(tbl, dependent.var, response.var, facet.by = facet.var, add = "boxplot")
+  g <- ggviolin(df, dependent.var, response.var, facet.by = facet.var, add = "boxplot")
   g <- g + yscale("log2") + stat_pvalue_manual(stat.test, label="label") + xlab("Spot Type")
   g
 }
@@ -456,8 +481,11 @@ plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial",
 ```{r}
 # Plot the distribution of UMI counts and gene counts over spots, as a function of whether those spots and within the tissue or outside of it (in file *count-and-feature-dist.png)
 tbl <- all.unfiltered.objs@meta.data
-g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial") + ylab("UMI Counts (log2)")
-g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial") + ylab("Feature Counts (log2)")
+tbl <- merge(tbl, dataset.metadata.df)
+tbl <- tbl[order(tbl$sample.name, tbl$type, tbl$sample.name, decreasing=TRUE),]
+tbl$sample.label <- paste0(tbl$sample.name, "\n", tbl$type)
+g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial", facet.var = "sample.label") + ylab("UMI Counts (log2)")
+g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial", facet.var = "sample.label") + ylab("Feature Counts (log2)")
 g <- plot_grid(g.cnt, g.feature, nrow=1, labels = "AUTO")
 png(paste0(plots_dir, "/", analysis_file_prefix, "count-and-feature-dist.png"), width = 2 * 480)
 print(g)
@@ -538,11 +566,12 @@ downsample.feature.df <-
         })
 colnames(downsample.feature.df)[1] <- "sample.name" 
 downsample.feature.df$downsample.count <- as.numeric(downsample.feature.df$downsample.count)
+downsample.feature.df <- merge(downsample.feature.df, dataset.metadata.df)
 ```
 
 ```{r}
 # Plot the sensitivity (# of detected genes/features vs # of reads; in file *num-features-vs-num-downsampled-reads.png)
-g <- ggplot(downsample.feature.df, aes(x = downsample.count, y = num.features, colour = sample.name))
+g <- ggplot(downsample.feature.df, aes(x = downsample.count, y = num.features, colour = sample.name, shape = type))
 g <- g + geom_point()
 g <- g + xlab("Spot Read Count (Median)") + ylab("Spot Feature Count (Median)")
 g <- g + theme(text = element_text(size = 20))
@@ -650,6 +679,17 @@ top.genes.tissue <-
 all.background.genes <- unique(Reduce("c", top.genes.background))
 all.tissue.genes <- unique(Reduce("c", top.genes.tissue))
 common.genes <- intersect(all.background.genes, all.tissue.genes)
+
+intersect.background.genes <- unique(Reduce("intersect", top.genes.background))
+intersect.tissue.genes <- unique(Reduce("intersect", top.genes.tissue))
+
+
+flag <- dataset.labels == "FFPE"
+ffpe.background.genes <- unique(Reduce("c", top.genes.background[flag]))
+ffpe.tissue.genes <- unique(Reduce("c", top.genes.tissue[flag]))
+common.ffpe.genes <- intersect(ffpe.background.genes, ffpe.tissue.genes)
+intersect.tissue.ffpe.genes <- unique(Reduce("intersect", top.genes.tissue[flag]))
+
 ```
 
 
@@ -658,11 +698,12 @@ common.genes <- intersect(all.background.genes, all.tissue.genes)
 # genes that are common to the background and tissue
 top.genes.background.plts <-
   llply(datasets,
-        .fun = function(data.set) {
-          obj <- unfiltered.objs[[data.set]]
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
           background.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
-          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = common.genes)
-          g <- g + ggtitle(data.set)
+          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = intersect.background.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
           g
         })
 g.all <- plot_grid(plotlist=top.genes.background.plts)
@@ -674,16 +715,69 @@ d <- dev.off()
 # Do the same for spots in the tissue
 top.genes.tissue.plts <-
   llply(datasets,
-        .fun = function(data.set) {
-          obj <- unfiltered.objs[[data.set]]
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
           tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
-          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = common.genes)
-          g <- g + ggtitle(data.set)
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = intersect.tissue.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
           g
         })
 g.all <- plot_grid(plotlist=top.genes.tissue.plts)
 g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
 png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Repeat both of the above, but only for FFPE
+# Create plots showing the top 20 most prevalent genes in the background -- highlighting (in bold) the
+# genes that are common to the background and tissue
+top.genes.background.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          background.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = common.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.background.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Background Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-background-spot-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Do the same for spots in the tissue
+top.genes.tissue.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = common.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.tissue.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+top.genes.intersect.tissue.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = intersect.tissue.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.intersect.tissue.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot-intersect-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
 print(g.all)
 d <- dev.off()
 ```
