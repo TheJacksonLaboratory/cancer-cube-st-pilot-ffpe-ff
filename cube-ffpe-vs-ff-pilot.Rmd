@@ -40,6 +40,10 @@ suppressPackageStartupMessages(p_load(rjson))
 ##devtools::install_github("gaospecial/ggVennDiagram")
 suppressPackageStartupMessages(p_load(ggVennDiagram))
 suppressPackageStartupMessages(p_load(gridExtra))
+library("gplots")
+library(RColorBrewer)
+library(harmony)
+
 
 ```
 
@@ -63,9 +67,59 @@ Configure variables that point to location of images and directories where analy
 # long.dataset.names <- c('SC2200108_DT-21-4142-BR6526', 'SC2200109_DT-21-4142-BR6526', 'SC2200110_DT-21-4141-BR7212', 'SC2200111_DT-21-4141-BR7212', 'SC2200104_BR6526')
 # long.dataset.names <- c('SC2200104_BR6526')
 # long.dataset.names <- names(dataset.labels)
+
+data_types <- c('pdac','endometrium','gbm','breastcancer','lungcancer','peritoneum')
+#for (curr_datatypes in data_types){
+#}
+curr_datatypes=data_types[6]
+if (curr_datatypes==data_types[1]){
+# base_dir <- '/projects/compsci/whitebr/cancer-cube/qc-pilot/cpdac/'  
+# long.dataset.names <- list('BR6526-108' = 'SC2200108_DT-21-4142-BR6526', 'BR6526-109' = 'SC2200109_DT-21-4142-BR6526', 'BR7212-110' = 'SC2200110_DT-21-4141-BR7212', 'BR7212-111' = 'SC2200111_DT-21-4141-BR7212', 'BR6526-104' = 'SC2200104_BR6526')
+
+base_dir<-'/projects/compsci/USERS/somara/pdac/'
 biological.replicates <- c("BR6526", "BR7212")
-long.dataset.names <- list('BR6526-108' = 'SC2200108_DT-21-4142-BR6526', 'BR6526-109' = 'SC2200109_DT-21-4142-BR6526', 'BR7212-110' = 'SC2200110_DT-21-4141-BR7212', 'BR7212-111' = 'SC2200111_DT-21-4141-BR7212', 'BR6526-104' = 'SC2200104_BR6526')
+long.dataset.names <- list('BR6526-108' = 'SC2200108BR6526', 'BR6526-109' = 'SC2200109BR6526', 'BR7212-110' = 'SC2200110BR7212', 'BR7212-111' = 'SC2200111BR7212', 'BR6526-104' = 'SC2200104_BR6526')
 dataset.labels <- list('BR6526-108' = 'FFPE', 'BR6526-109' = 'FFPE', 'BR7212-110' = 'FFPE', 'BR7212-111' = 'FFPE', 'BR6526-104' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")
+} else if (curr_datatypes==data_types[2]){
+base_dir <- '/projects/compsci/USERS/somara/endometrium/'
+biological.replicates <- c("EuE-31")
+long.dataset.names <- list('EuE-31-236' = 'SC2200236_EuE-31', 'EuE-31-235' = 'SC2200235_EuE-31', 'EuE-31-165' = 'SC2200165_EuE-31', 'EuE-31-164' = 'SC2200164_EuE-31')
+dataset.labels <- list('EuE-31-164' = 'Frozen', 'EuE-31-165' = 'Frozen', 'EuE-31-235' = 'FFPE', 'EuE-31-236' = 'FFPE')
+species_sample <- replicate(length(dataset.labels), "Human")
+} else if (curr_datatypes==data_types[3]) {
+base_dir <- '/projects/compsci/USERS/somara/gbm/'
+biological.replicates <- c("UC-01","UC-02")
+long.dataset.names <- list('UC-02-242' = 'SC2200242_UC-02', 'UC-02-241' = 'SC2200241_UC-02', 'UC-01-240' = 'SC2200240_UC-01', 'UC-02-171' = 'SC2200171_UC-02', 'UC-02-170' = 'SC2200170_UC-02', 'UC-01-169' = 'SC2200169_UC-01', 'UC-01-168' = 'SC2200168_UC-01')
+dataset.labels <- list('UC-02-242' = 'FFPE', 'UC-02-241' = 'FFPE', 'UC-01-240' = 'FFPE', 'UC-02-171' = 'Frozen', 'UC-02-170' = 'Frozen','UC-01-169' = 'Frozen', 'UC-01-168' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Human")
+} else if (curr_datatypes==data_types[4]) {
+base_dir <- '/projects/compsci/USERS/somara/breast_cancer/'
+biological.replicates <- c("T1O")
+long.dataset.names <- list('T1O-244' = 'SC2200244_T1O', 'T1O-243' = 'SC2200243_T1O', 'T1O-199' = 'SC2200199_T1O', 'T1O-198' = 'SC2200198_T1O')
+dataset.labels <- list('T1O-244' = 'FFPE', 'T1O-243' = 'FFPE', 'T1O-199' = 'Frozen', 'T1O-198' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")  
+} else if (curr_datatypes==data_types[5]) {
+base_dir <- '/projects/compsci/USERS/somara/lung_cancer/'
+biological.replicates <- c("LM2O")
+long.dataset.names <- list('LM2O-246' = 'SC2200246_LM2O', 'LM2O-245' = 'SC2200245_LM2O', 'LM2O-201' = 'SC2200201_LM2O', 'LM2O-200' = 'SC2200200_LM2O')
+dataset.labels <- list('LM2O-246' ='FFPE', 'LM2O-245' ='FFPE', 'LM2O-201' = 'Frozen', 'LM2O-200' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")  
+} else if (curr_datatypes==data_types[6]){
+base_dir <- '/projects/compsci/USERS/somara/peritoneum/'
+biological.replicates <- c('EcP-33')
+long.dataset.names <- list('EcP-33-238' = 'SC2200238_EcP-33', 'EcP-33-167' = 'SC2200167_EcP-33', 'EcP-33-166' = 'SC2200166_EcP-33')
+dataset.labels <- list('EcP-33-167' = 'Frozen', 'EcP-33-166' = 'Frozen', 'EcP-33-238' = 'FFPE')
+species_sample <- replicate(length(dataset.labels), "Human")
+}
+
+# Write csv file for automatic ST pipeline 
+temp_var<- paste0(base_dir,long.dataset.names,'/spaceranger/')
+temp_var2<- replicate(length(dataset.labels), "")
+ST_automated<- data.frame (sample_id= names(dataset.labels), species= species_sample, st_data_dir=temp_var, sc_data_dir= temp_var2 )
+dir.create(file.path(base_dir, '/automatic_analysis/'))
+write.csv(ST_automated,paste0(base_dir,'/automatic_analysis/',curr_datatypes,'.csv'), row.names = FALSE ,quote=FALSE)
+
 dataset.metadata.df <- data.frame(sample.name = names(dataset.labels), type = unlist(unname(dataset.labels)))
 
 # # Strip off everything past the "_" so that SC2200108_DT-21-4142-BR6526 -> SC2200108
@@ -73,8 +127,13 @@ dataset.metadata.df <- data.frame(sample.name = names(dataset.labels), type = un
 #names(long.dataset.names) <- simple.dataset.names
 #names(dataset.labels) <- simple.dataset.names
 #datasets <- simple.dataset.names
+
+
 datasets <- names(long.dataset.names)
 names(datasets) <- datasets
+```
+
+```{r}
 
 sample.lvls <- dataset.metadata.df$sample.name
 sample.lvls <- sample.lvls[order(dataset.metadata.df$sample.name, dataset.metadata.df$type)]
@@ -84,10 +143,10 @@ long.dataset.names <- long.dataset.names[sample.lvls]
 
 ffpe.datasets <- datasets[dataset.labels == "FFPE"]
 frozen.datasets <- datasets[dataset.labels == "Frozen"]
+color_list<-list('FFPE'="#d8b365" , 'Frozen'='#5ab4ac')
 
 
 # Directory holding the raw data
-base_dir <- '/projects/compsci/whitebr/cancer-cube/qc-pilot/pdac/'
 spaceranger_dirs <- paste0(base_dir, long.dataset.names, "/spaceranger/")
 names(spaceranger_dirs) <- datasets
 
@@ -99,7 +158,7 @@ plots_dir <- paste0(base_dir, '/plots/')
 dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Prefix for all output files (results and plots)
-analysis_file_prefix <- paste0("pdac-pilot-")
+analysis_file_prefix <- paste0(curr_datatypes,"-pilot-")
 ```
 
 
@@ -198,7 +257,10 @@ summary.tbl <-
           # json.summary
           seq.metrics.file <- paste0(spaceranger_dirs[[dataset]], "/", "metrics_summary.csv")
           tbl <- read.table(seq.metrics.file, sep=",", header=TRUE, as.is=TRUE)
-          rename.cols <- list("Reads.Mapped.Confidently.to.Probe.Set" = "Reads.Mapped.Confidently.to.Genome", "Number.of.Panel.Genes....10.UMIs" = "Total.Genes.Detected")
+          #rename.cols <- list("Reads.Mapped.Confidently.to.Probe.Set" = "Reads.Mapped.Confidently.to.Genome", "Number.of.Panel.Genes....10.UMIs" = "Total.Genes.Detected")
+          rename.cols <- list("Reads.Mapped.Confidently.to.Probe.Set" = "Reads.Mapped",
+                              "Reads.Mapped.Confidently.to.Genome"= "Reads.Mapped" ,"Number.of.Panel.Genes....10.UMIs" = "Total.Genes.Detected")
+
           for(col in names(rename.cols)) {
             flag <- colnames(tbl) == col
             colnames(tbl)[flag] <- rename.cols[[col]]
@@ -208,7 +270,8 @@ summary.tbl <-
 colnames(summary.tbl)[1] <- "sample"
 
 # cols <- c("Total.Genes.Detected", "Reads.Mapped.Confidently.to.Genome",  "Number.of.Reads",  "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
-cols <- c("Reads.Mapped.Confidently.to.Genome",  "Number.of.Reads",  "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
+#cols <- c("Reads.Mapped.Confidently.to.Genome",  "Number.of.Reads",  "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
+cols <- c("Number.of.Reads", "Reads.Mapped", "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
 summary.tbl <- summary.tbl[, c("sample", cols)]
 summary.tbl <- melt(summary.tbl, id.vars = c("sample"))
 colnames(summary.tbl) <- c("sample", "metric", "value")
@@ -219,7 +282,8 @@ summary.tbl$metric <- factor(summary.tbl$metric, levels = c("Total Genes Detecte
 summary.tbl$sample <- factor(summary.tbl$sample, levels=sample.lvls)
 summary.tbl <- merge(summary.tbl, dataset.metadata.df, by.x = "sample", by.y ="sample.name")
 
-g <- ggplot(data = subset(summary.tbl, metric == "Fraction Reads in Spots Under Tissue"), aes(x = sample, y = value, fill=type)) + geom_col() 
+
+g <- ggplot(data = subset(summary.tbl, metric == "Fraction Reads in Spots Under Tissue"), aes(x = sample, y = value, fill=type)) + geom_bar(stat="identity") + scale_fill_manual(values= unname(unlist(color_list)))
 g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 g <- g + ylab("Fraction Reads in Spots\nUnder Tissue") + xlab("")
 g <- g + theme(text = element_text(size = 20))
@@ -227,7 +291,7 @@ png(paste0(plots_dir, "/", analysis_file_prefix, "frac-reads-in-spots.png"))
 print(g)
 d <- dev.off()
 
-g <- ggplot(data = subset(summary.tbl, !(metric %in% c("Fraction Reads in Spots Under Tissue", "Number of Spots Under Tissue"))), aes(x = sample, y = value, fill=type)) + geom_col() + facet_wrap(~ metric, scales="free", labeller = label_wrap_gen())
+g <- ggplot(data = subset(summary.tbl, !(metric %in% c("Fraction Reads in Spots Under Tissue", "Number of Spots Under Tissue"))), aes(x = sample, y = value, fill=type)) + geom_bar(stat="identity") + scale_fill_manual(values= unname(unlist(color_list))) + facet_wrap(~ metric, scales="free", labeller = label_wrap_gen())
 g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 g <- g + ylab("")
 png(paste0(plots_dir, "/", analysis_file_prefix, "summary.png"), width = 2 * 480)
@@ -303,13 +367,16 @@ eigValues = (pca@stdev)^2  ## EigenValues
 varExplained = eigValues / total_variance
 cumVarExplained <- cumsum(varExplained)
 
+obj.sct <- RunHarmony(obj.sct, group.by.vars = make.names("orig ident"))
+
 # Pick the number of dimensions based on a flattening of the elbow plot
-obj.sct <- FindNeighbors(obj.sct, dims = 1:20)
-obj.sct <- FindClusters(obj.sct, verbose = FALSE)
-obj.sct <- RunUMAP(obj.sct, dims = 1:20)
+obj.sct <- FindNeighbors(obj.sct,reduction = "harmony", dims = 1:20)
+obj.sct <- FindClusters(obj.sct, reduction = "harmony",verbose = FALSE)
+obj.sct <- RunUMAP(obj.sct, reduction = "harmony",dims = 1:20)
 png(paste0(plots_dir,"clusters-merged-UMAP-sct.png"),width=1400,height =600)
-gg <- DimPlot(obj.sct, reduction = "umap", group.by = c("ident", "orig.ident"))
-gg <- gg + theme(text = element_text(size = 20))
+obj.sct$Sample=obj.sct$orig.ident
+obj.sct$Cluster=obj.sct@active.ident
+gg <- DimPlot(obj.sct, reduction = "umap", group.by = c("Cluster","Sample")) 
 print(gg)
 d <- dev.off()
 
@@ -347,11 +414,13 @@ g <- g + theme(text = element_text(size = 20))
 print(g)
 d <- dev.off()
 
-png(paste0(plots_dir,"all-cluster-proportions-heatmap-scran.png"))
-Heatmap(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"))
+png(paste0(plots_dir,"all-cluster-proportions-heatmap-sct.png"),width=980, height=980)
+
+color_list<-list('FFPE'="#d8b365" , 'Frozen'='#5ab4ac')
+colSide <- as.vector(unlist(color_list[unlist(dataset.labels[levels(bar$sample)])]))
+
+heatmap.2(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"), ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)),xlab="Cluster", ylab="Sample",margins=c(12,8),trace="none",lhei=c(1, 6),keysize=1,key.title="Proportion")
 d <- dev.off()
-
-
 ```
 
 ```{r}
@@ -371,9 +440,13 @@ d <- dev.off()
 frozen.only <- frozen.genes[!(frozen.genes %in% ffpe.genes)]
 
 library(biomaRt)
+if (species_sample[1]=='Human'){
+    gene_db = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+} else {
+  gene_db = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+}
 
-mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
-gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=frozen.only, mart=mouse)
+gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=frozen.only, mart=gene_db)
 
 frozen.only.biotypes <- as.data.frame(table(gb$gene_biotype))
 colnames(frozen.only.biotypes) <- c("biotype", "Freq")
@@ -382,6 +455,19 @@ frozen.only.biotypes <- frozen.only.biotypes[o,]
 
 png(paste0(plots_dir,"frozen-biotypes.png"))
 grid.table(frozen.only.biotypes,rows=NULL)
+d <- dev.off()
+
+ffpe.only <- ffpe.genes[!(ffpe.genes %in% frozen.genes)]
+
+gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=ffpe.only, mart=gene_db)
+
+ffpe.only.biotypes <- as.data.frame(table(gb$gene_biotype))
+colnames(ffpe.only.biotypes) <- c("biotype", "Freq")
+o <- order(ffpe.only.biotypes$Freq, decreasing=TRUE)
+ffpe.only.biotypes <- ffpe.only.biotypes[o,]
+
+png(paste0(plots_dir,"ffpe-biotypes.png"))
+grid.table(ffpe.only.biotypes,rows=NULL)
 d <- dev.off()
 ```
 
@@ -403,12 +489,15 @@ eigValues = (pca@stdev)^2  ## EigenValues
 varExplained = eigValues / total_variance
 cumVarExplained <- cumsum(varExplained)
 
-obj.scran <- FindNeighbors(obj.scran, dims = 1:20)
-obj.scran <- FindClusters(obj.scran, verbose = FALSE)
-obj.scran <- RunUMAP(obj.scran, dims = 1:20)
+obj.scran <- RunHarmony(obj.scran, group.by.vars = make.names("orig ident"))
+
+obj.scran <- FindNeighbors(obj.scran,reduction = "harmony", dims = 1:20)
+obj.scran <- FindClusters(obj.scran, reduction = "harmony", verbose = FALSE)
+obj.scran <- RunUMAP(obj.scran, reduction = "harmony", dims = 1:20)
 png(paste0(plots_dir,"clusters-merged-UMAP-scran.png"),width=1400,height =600)
-gg <- DimPlot(obj.scran, reduction = "umap", group.by = c("ident", "orig.ident"))
-gg <- gg + theme(text = element_text(size = 20))
+obj.scran$Sample=obj.scran$orig.ident
+obj.scran$Cluster=obj.scran@active.ident
+gg <- DimPlot(obj.scran, reduction = "umap", group.by = c("Cluster","Sample")) 
 print(gg)
 d <- dev.off()
 
@@ -446,8 +535,15 @@ g <- g + theme(text = element_text(size = 20))
 print(g)
 d <- dev.off()
 
-png(paste0(plots_dir,"all-cluster-proportions-heatmap-scran.png"))
-Heatmap(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"))
+color_list<-list('FFPE'="#d8b365" , 'Frozen'='#5ab4ac')
+colSide <- as.vector(unlist(color_list[unlist(dataset.labels[levels(bar$sample)])]))
+par(cex.main=80)
+png(paste0(plots_dir,"all-cluster-proportions-heatmap-scran.png"),width=680, height=980)
+heatmap.2(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"), ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)),ylab="Cluster", xlab="Sample",margins=c(13,6),trace="none",lhei=c(1,8),keysize=2,key.title="Proportion",cexRow = 2.5,cexCol = 2.5) 
+#title('ddddddd', cex.main = 15 * op[["cex.main"]])
+ ## this will affect also legend title font size
+
+#g<- g + title(main, cex.main = 1.5 * op[["cex.main"]])
 d <- dev.off()
 
 ```
@@ -817,6 +913,10 @@ intersect.tissue.ffpe.genes <- unique(Reduce("intersect", top.genes.tissue[flag]
 
 
 ```{r}
+```
+
+
+```{r}
 # Create plots showing the top 20 most prevalent genes in the background -- highlighting (in bold) the
 # genes that are common to the background and tissue
 top.genes.background.plts <-
@@ -903,6 +1003,73 @@ g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
 png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot-intersect-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
 print(g.all)
 d <- dev.off()
+
+
+
+```
+
+
+```{r}
+mylist_qval<-list()
+mylist_top50_LLR<-list()
+mylist_top100_LLR<-list()
+for (i in names(long.dataset.names)){
+  r<-read.csv(file = paste0(base_dir, "/automatic_analysis/results/",i,"/stSpatialDE.csv"), header = TRUE, as.is = TRUE, row.names = 1)
+  r  <-r[r$qval==0,]
+  mm <-sort(r$LLR,decreasing= TRUE,index.return = TRUE)
+  
+  mylist_qval[[ i ]]<-r$g.1
+  mylist_top50_LLR[[ i ]]<-r$g.1[mm$ix[1:50]]
+  mylist_top100_LLR[[ i ]]<-r$g.1[mm$ix[1:100]]
+}
+dictionary_terms<-c(unlist(unique(dataset.labels)),unlist(biological.replicates),"")
+for (temp in dictionary_terms){
+temp_list1 <- list()
+temp_list2 <- list()
+temp_list3 <- list()
+
+#temp<-dictionary_terms[1]
+if ((temp==dictionary_terms[1]|temp==dictionary_terms[2])&(length(mylist_qval[dataset.labels==temp])<=4 & length(mylist_qval[dataset.labels==temp])>=2)){
+  temp_list1<-mylist_qval[dataset.labels==temp]
+  temp_list2<-mylist_top50_LLR[dataset.labels==temp]
+  temp_list3<-mylist_top100_LLR[dataset.labels==temp]
+}else if((temp==dictionary_terms[3] | temp==dictionary_terms[4]) & (length(mylist_qval[dataset.labels==temp]) <=4 & length(mylist_qval[dataset.labels==temp])>=2)) {
+  temp_list1<-mylist_qval[grepl(datasets, pattern=temp)]
+  temp_list2<-mylist_top50_LLR[grepl(datasets, pattern=temp)]
+  temp_list3<-mylist_top100_LLR[grepl(datasets, pattern=temp)]
+}else if (temp=="" & ( length(mylist_qval)<=4 & length(mylist_qval)>2)){
+  temp_list1<-mylist_qval
+  temp_list2<-mylist_top50_LLR
+  temp_list3<-mylist_top100_LLR
+}
+if (length(temp_list1)!=0){
+  print(temp)
+g <- ggVennDiagram(temp_list1)
+g <- g + ggtitle(paste0("Spatially Differentially Expressed genes\n with 0 p-value in ",curr_datatypes, " ",temp)) 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+g <- g + scale_x_continuous(expand = expansion(mult = .2))
+png(paste0(plots_dir, "/", analysis_file_prefix, "venn_SpatialDE_pval_", temp,".png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+
+g <- ggVennDiagram(temp_list2)
+g <- g + ggtitle(paste0("Top 50 Spatially Differentially Expressed \ngenes  in ",curr_datatypes, " ",temp)) 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+g <- g + scale_x_continuous(expand = expansion(mult = .2))
+png(paste0(plots_dir, "/", analysis_file_prefix, "venn_SpatialDE_top50_", temp,".png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+
+g <- ggVennDiagram(temp_list3)
+g <- g + ggtitle(paste0("Top 100 Spatially Differentially Expressed \ngenes  in ",curr_datatypes, " ",temp)) 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+g <- g + scale_x_continuous(expand = expansion(mult = .2))
+png(paste0(plots_dir, "/", analysis_file_prefix, "venn_SpatialDE_top100_", temp,".png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+}
+}
+#}
 ```
 
 
