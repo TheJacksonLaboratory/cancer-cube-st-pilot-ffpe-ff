@@ -634,7 +634,6 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 # 1. Calculate bivariateMoran'sI between min(pop1,pop2), gene1 and min(pop1,pop2), gene2 and take max pvalue
 # 2. Plot distribution of ligand-receptor pairs from pub relative to quintiles? FPKMs?
 # 3. Plot distribution of pops (across samples and pops)
-# 4. Plot spatial distribution of pops
 
 i <- 2
 rctd <- rctds[[i]]
@@ -701,6 +700,19 @@ for(i in 1:length(filtered.objs)) {
   print(g)
   d <- dev.off()
 }
+```
+
+```{r}
+all.pop.weights <- 
+  ldply(rctds, format.rctd.output)
+colnames(all.pop.weights)[1] <- "sample"
+```
+
+```{r}
+g <- plot.population.fractions.across.samples(all.pop.weights, sample.col = "sample")
+png(paste0(plots_dir, "/pops/", "population-distributions.png"), width = 2 * 480, height = 1  * 480)
+print(g)
+d <- dev.off()
 ```
 
 

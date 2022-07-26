@@ -92,3 +92,39 @@ plot.population.weights <- function(rctd, pop.weights, populations, obj = NULL, 
   }
   return(g)
 }
+
+#' Plot the distribution of fractions for each (deconvolved population) across samples.
+#' 
+#' If there is only one sample, populations will be listed on the x axis. 
+#' Otherwise, plots will be faceted on populations and samples will be listed on x axis.
+#' 
+#' @param pop.weights A data frame whose rows are spots, whose columns are deconvolved populations, and whose 
+#'                    entries are the (predicted) fraction of a population in a given spot.
+#'                    data.frames for each sample can be created by format.rctd.output_.
+#' @param sample.col The column within pop.weights that gives the name of the sample.
+#'                   If null, pop.weights is considered to describe only one sample.
+#' @return a ggplot
+plot.population.fractions.across.samples <- function(pop.weights, sample.col = NULL) {
+  num.samples <- 1
+  if(!is.null(sample.col) && (length(unique(pop.weights[, sample.col])) > 1)) {
+    df <- reshape2::melt(pop.weights, id.vars = sample.col)
+    colnames(df) <- c(sample.col, "variable", "value")
+    df <- subset(df, !(variable %in% c("x","y")))
+    g <- ggplot(data = df, aes_string(x = sample.col, y = "value"))
+    g <- g + facet_wrap(as.formula(paste("~", "variable")), scales = "free_y")
+    g <- g + xlab("Sample")
+  } else {
+    df <- reshape2::melt(pop.weights)
+    colnames(df) <- c("variable", "value")
+    df <- subset(df, !(variable %in% c("x","y")))
+    g <- ggplot(data = df, aes(x = variable, y = value))
+    g <- g + xlab("Population")
+  }
+  g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  # beeswarm takes a long time
+  # g <- g + geom_beeswarm()
+  # g <- g + geom_boxplot()
+  g <- g + geom_violin()
+  g <- g + ylab("Population Fraction")
+  g
+}
