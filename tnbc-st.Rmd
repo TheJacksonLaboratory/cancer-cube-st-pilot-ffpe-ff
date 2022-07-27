@@ -330,6 +330,18 @@ plot(density(pmin(df[, c("Epithelial_Basal_Cycling")], df[, c("iCAFs")])))
 ```
 
 
+```{r}
+# Add RCTD metadata to the Seurat objects
+filtered.objs <-
+  llply(datasets, .parallel = FALSE,
+        .fun = function(nm) {
+          print(nm)
+          md.df <- format.rctd.output(rctds[[nm]])
+          obj <- add.metadata.to.seurat.obj(filtered.objs[[nm]], md.df)
+          obj
+        })
+```
+
 
 ```{r}
 # Let's try to recapitulate interactions from 
@@ -631,8 +643,23 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 # WORKING
 
 # TODO:
+# 1. Strip plots (columns are spots) of: -- also add cancer and order spots by cancer, then myeloid, then CD14, then etc. 
+# 1a. iCD14+ (CD14-TLR4-CD163-SIGLEC); sCD14+ (CD14-CD2-LY75)
+# 1b. CD8+CD103+CXCL13+ T cells in tumor nests
+# 3. Sort stroma vs cancer spots (whether cancer > 50%?) -- look at CD14/etc within these
+# 4. Look for T cell signalling involving CXCL13 and either myeloid or cancer cells
+# 5. Look for interactions with myeloid cells
+# 6. Can we do de novo discovery? Previously was using those from publication.
+
+# 1. Compute all LR expressions in a sample
+# 2. Try computing boxplot of all LR within a sample with quantiles
+# 3. Compute median and ranges within sample
+# 4. Concatenate across all samples
+# 5. Output as table
+# 3. 
 # 1. Calculate bivariateMoran'sI between min(pop1,pop2), gene1 and min(pop1,pop2), gene2 and take max pvalue
 # 2. Plot distribution of ligand-receptor pairs from pub relative to quintiles? FPKMs?
+
 
 i <- 2
 rctd <- rctds[[i]]
@@ -700,6 +727,33 @@ for(i in 1:length(filtered.objs)) {
   d <- dev.off()
 }
 ```
+
+```{r}
+# Output Myeloid cell genes of interest to Karolina
+l_ply(datasets,
+      .fun = function(dataset) {
+        file <- paste0(plots_dir, "/", "myeloid-genes-", dataset, ".png")
+        png(file, width = 2 * 480, height = 1 * 480)
+        # g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = TRUE)
+        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "CD8A", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
+        print(g)
+        d <- dev.off()
+      })
+```
+
+```{r}
+# Output T cell genes of interest to Karolina
+l_ply(datasets,
+      .fun = function(dataset) {
+        file <- paste0(plots_dir, "/", "cd8-t-cell-genes-", dataset, ".png")
+        png(file, width = 2 * 480, height = 1 * 480)
+        # ITGAE = CD103
+        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "PTPRC", "CD3E", "CD8A", "ITGAE", "CXCL13", "Myeloid"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
+        print(g)
+        d <- dev.off()
+      })
+```
+
 
 ```{r}
 all.pop.weights <- 
@@ -949,7 +1003,7 @@ plot.gene.overlays <- function(obj, gene) {
             g <- g + scale_fill_gradientn(name = gene, colours = Seurat:::SpatialColors(n = 100), limits=c(0,mx))
             g
           })
-  plot_grid(plotlist = plts)
+  # plot_grid(plotlist = plts)
   g <- plot_grid(plotlist = plts)
   g
 }
@@ -1242,34 +1296,8 @@ all.unfiltered.objs <- AddMetaData(all.unfiltered.objs, sample.name.df[, c("samp
 
 
 ```{r}
-#' Create a spatial feature plot
-#' 
-#' A convenience function that wraps Seurat's SpatialFeaturePlot to add a centered title and a legend at the bottom.
-#'
-#' @param obj A Seurat object.
-#' @param features A vector of strings listing one or more features to plot.
-#' @param legend.name A string name for the legend
-#' @return a ggplot
-plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count") {
-  g <- SpatialFeaturePlot(obj, features = features)
-  # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
-  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
-  # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
-  # for the following code, which suppresses 
-  # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
-  i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
-  g$scales$scales[[i]] <- NULL
-  # g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
-  g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
-  g
-}
-```
-
-```{r}
 
 ```
-
-
 
 
 ```{r}

@@ -150,3 +150,26 @@ calculate.expression.quantiles <- function(expr.mat, quantiles = seq(0, 1, by=0.
   all.means <- rowMeans(expr.mat)
   quantile(all.means, probs=quantiles)
 }
+
+#' Add metadata to Seurat object.
+#'  
+#' This function is a simple wrapper around AddMetaData
+#' 
+#' @param obj A Seurat object
+#' @param metadata.df A data.frame expected to have all of the rownames (corresponding to cells/spots) in existing metadata for obj (obj[[]])
+#' @return obj modified to hold the metadata in metadata.df
+add.metadata.to.seurat.obj <- function(obj, metadata.df) {
+  # rows <- rownames(obj[[]])
+  # print(head(rows))
+  # print(table(rows %in% rownames(metadata.df)))
+  # stopifnot(rows %in% rownames(metadata.df))
+  # metadata.df <- metadata.df[rows,]
+  colnames(metadata.df) <- make.names(colnames(metadata.df))
+  cols.to.add <- colnames(metadata.df)
+  all.meta <- merge(obj[[]], metadata.df, by = "row.names", all.x = TRUE)
+  rownames(all.meta) <- all.meta$Row.names
+  ids <- Cells(obj)
+  all.meta <- all.meta[ids,]
+  obj <- AddMetaData(obj, all.meta[, cols.to.add])
+  obj
+}

@@ -128,3 +128,56 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
   g <- g + ylab("Population Fraction")
   g
 }
+
+#' Create a spatial feature plot
+#' 
+#' A convenience function that wraps Seurat's SpatialFeaturePlot to add a centered title and a legend at the bottom.
+#'
+#' @param obj A Seurat object.
+#' @param features A vector of strings listing one or more features to plot.
+#' @param legend.name A string name for the legend
+#' @param rescale.legend Boolean indicating whether to divide the values by 1000 in legend scale (obviously hacky, but intended for large numbers like total counts)
+#' @return a ggplot
+plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE) {
+  g <- SpatialFeaturePlot(obj, features = features)
+  # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
+  # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
+  # for the following code, which suppresses 
+  # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
+  # g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  if(rescale.legend) {
+    i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
+    g$scales$scales[[i]] <- NULL
+    g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  }
+  g
+}
+
+#' Create a spatial feature plot
+#' 
+#' A convenience function that wraps Seurat's SpatialFeaturePlot to add a centered title and a legend at the bottom.
+#'
+#' @param obj A Seurat object.
+#' @param features A vector of strings listing one or more features to plot.
+#' @param include.hne Boolean indicating whether to include an H&E plot
+#' @param include.umi.cnts Boolean indicating whether to include a plot of UMI counts
+#' @param include.feature.cnts Boolean indicating whether to include a plot of feature / gene counts
+#' @return a ggplot
+plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE) {
+  names(features) <- features
+  plts <- lapply(features, function(feature) plot.spatial(obj, features = c(feature), legend.name = feature, rescale.legend = FALSE))
+  if(include.feature.cnts) {
+    p <- plot.spatial(obj, "nFeature_Spatial", "# Features (K)", rescale.legend = TRUE)
+    plts <- c(list(p), plts)
+  }
+  if(include.umi.cnts) {
+    p <- plot.spatial(obj, "nCount_Spatial", "# UMIs (K)", rescale.legend = TRUE)
+    plts <- c(list(p), plts)
+  }
+  if(include.hne) {
+    p <- plot.hne(obj, keep.invisible.legend = TRUE)
+    plts <- c(list(p), plts)
+  }
+  plot_grid(plotlist = plts)
+}
