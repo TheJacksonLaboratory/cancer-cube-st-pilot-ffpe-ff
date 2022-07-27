@@ -1,3 +1,14 @@
+#' Try to load package, installing first (via pacman) if necessary
+#' 
+#' @param package A string representing the package to load
+#' @return Nothing
+p_load_ <- function(package) {
+  if(!require(pacman)) {
+    install.packages(pacman)
+  }
+  suppressPackageStartupMessages(p_load(package))
+}
+
 #' Create a panel of plots, each showing deconvolved fractions of a particular population.
 #' 
 #' @param rctd An RCTD object, from the spacexr package.
@@ -12,4 +23,98 @@ format.rctd.output_ <- function(rctd) {
   df$x <- rctd@spatialRNA@coords$x
   df$y <- rctd@spatialRNA@coords$y
   df
+}
+
+#' Parse ligand-receptor interactions from cellphonedb.
+#' 
+#' @return A list with the following entries:
+#'         interaction.tbl: a data.frame where rows are ligand-receptor interactions and with the following columns:
+#'                          id_cp_interaction: cellphonedb name for ligand-receptor interaction pair
+#'                          partner_a: cellphonedb name for partner a in the interaction (i.e., ligand)
+#'                          partner_b: cellphonedb name for partner b in the interaction (i.e., receptor)
+#'                          ligand_hgnc_symbols: comma-separated list of ligand hgnc symbols
+#'                          ligand_ensembl_ids: comma-separated list of ligand ensembl ids
+#'                          receptor_hgnc_symbols: comma-separated list of ligand hgnc symbols
+#'                          receptor_ensembl_ids: comma-separated list of ligand ensembl ids
+#'         all.ligand.hgnc.symbols: a vector of all ligand hgnc symbols (i.e., concatenation of ligand_hgnc_symbols from interaction.tbl)  
+#'         all.ligand.ensembl.ids: a vector of all ligand ensembl ids (i.e., concatenation of ligand_ensembl_ids from interaction.tbl)  
+#'         all.receptor.hgnc.symbols: a vector of all receptor hgnc symbols (i.e., concatenation of receptor_hgnc_symbols from interaction.tbl)  
+#'         all.receptor.ensembl.ids: a vector of all receptor ensembl ids (i.e., concatenation of receptor_ensembl_ids from interaction.tbl)  
+read.cellphonedb.ligand.receptors <- function() {
+  # Read the cellphonedb tables
+  interaction.tbl <- read.table("https://raw.githubusercontent.com/ventolab/CellphoneDB/master/cellphonedb/src/core/data/interaction_input.csv", sep=",", header=TRUE)
+  complex.tbl <- read.table("https://raw.githubusercontent.com/ventolab/CellphoneDB/master/cellphonedb/src/core/data/complex_input.csv", sep=",", header=TRUE)
+  gene.tbl <- read.table("https://raw.githubusercontent.com/ventolab/CellphoneDB/master/cellphonedb/src/core/data/gene_input.csv", sep=",", header=TRUE)
+  protein.tbl <- read.table("https://raw.githubusercontent.com/ventolab/CellphoneDB/master/cellphonedb/src/core/data/protein_input.csv", sep=",", header=TRUE)
+  
+  # The complexes table has a complex_name (e.g., ACVL1_BMPR2) and up to four associated proteins 
+  # (identified by uniprot ids uniprot_{1,4}).
+  # To translate these proteins to genes, merge with the genes table, which has columns
+  # gene_name, uniport, hgnc_symbol, and ensembl
+  uniprot.cols <- grep(x = colnames(complex.tbl), pattern="uniprot", value = TRUE)
+  suffixes <- gsub(uniprot.cols, pattern = "uniprot", replacement="")
+  
+  for(i in 1:length(uniprot.cols)) {
+    gene.i.tbl <- gene.tbl
+    colnames(gene.i.tbl) <- paste0(colnames(gene.i.tbl), suffixes[i])
+    complex.tbl <- merge(complex.tbl, gene.i.tbl, all.x = TRUE)
+  }
+  
+  # Concatenate all of the hgnc symbol and ensembl columns
+  hgnc.symbol.cols <- grep(x = colnames(complex.tbl), pattern="hgnc_symbol", value = TRUE)
+  complex.tbl[, "hgnc_symbols"] <- unlist(apply(complex.tbl[, hgnc.symbol.cols], 1, function(row) paste0(na.omit(row), collapse=",")))
+  ensembl.cols <- grep(x = colnames(complex.tbl), pattern="ensembl", value = TRUE)
+  complex.tbl[, "ensembl_ids"] <- unlist(apply(complex.tbl[, ensembl.cols], 1, function(row) paste0(na.omit(row), collapse=",")))
+  
+  # Now merge the interaction and complex tables -- where partner_{a,b} in the interaction table is the {ligand,receptor} complex (or uniprot protein id)
+  suffixes <- c("_a", "_b")
+  for(i in 1:length(suffixes)) {
+    complex.i.tbl <- complex.tbl[, c("complex_name", "hgnc_symbols", "ensembl_ids")]
+    colnames(complex.i.tbl) <- paste0(colnames(complex.i.tbl), "_complex", suffixes[i])
+    interaction.tbl <- merge(interaction.tbl, complex.i.tbl, all.x = TRUE, by.x = paste0("partner", suffixes[i]), by.y = paste0("complex_name_complex", suffixes[i]))
+  }
+
+  # Now merge the interaction and protein tables -- to capture cases in which partner_{a,b} is a uniprot id
+  # But, first merge the protein and gene tables
+  protein.tbl <- merge(protein.tbl, gene.tbl, all.x = TRUE, by = "uniprot")
+  for(i in 1:length(suffixes)) {
+    protein.i.tbl <- protein.tbl[, c("uniprot", "hgnc_symbol", "ensembl")]
+    colnames(protein.i.tbl) <- paste0(colnames(protein.i.tbl), "_protein", suffixes[i])
+    interaction.tbl <- merge(interaction.tbl, protein.i.tbl, all.x = TRUE, by.x = paste0("partner", suffixes[i]), by.y = paste0("uniprot_protein", suffixes[i]))
+  }
+  
+  # At this point, we have potentially multiple rows per interaction and multiple columns with both hgnc symbols and ensembl ids.
+  # Let's concatentate all of these
+  concat.vals.across.rows.and.cols <- function(df, pattern) {
+    cols <- grep(colnames(df), pattern=pattern, value=TRUE)
+    vals <- unlist(apply(df[, cols, drop=FALSE], 1, function(row) paste0(na.omit(row), collapse=",")))
+    vals <- paste0(vals, collapse=",")
+    vals <- sort(unique(unlist(strsplit(vals, split=",")[[1]])))
+    vals <- paste0(vals, collapse=",")
+    vals
+  }
+  
+  interaction.tbl <-
+    ddply(interaction.tbl, .variables = c("id_cp_interaction", "partner_a", "partner_b"),
+          .fun = function(df) {
+            lig.syms <- concat.vals.across.rows.and.cols(df, pattern = ".*symbol.*_a")
+            rec.syms <- concat.vals.across.rows.and.cols(df, pattern = ".*symbol.*_b")
+            lig.ids <- concat.vals.across.rows.and.cols(df, pattern = ".*ensembl.*_a")
+            rec.ids <- concat.vals.across.rows.and.cols(df, pattern = ".*ensembl.*_b")
+            data.frame("ligand_hgnc_symbols" = lig.syms, "ligand_ensembl_ids" = lig.ids,
+                       "receptor_hgnc_symbols" = rec.syms, "receptor_ensembl_ids" = rec.ids)
+          })
+  
+  all.ligand.symbols <- strsplit(concat.vals.across.rows.and.cols(interaction.tbl, pattern="ligand_hgnc_symbols"), split=",")[[1]]
+  all.ligand.ids <- strsplit(concat.vals.across.rows.and.cols(interaction.tbl, pattern="ligand_ensembl_ids"), split=",")[[1]]
+  all.receptor.symbols <- strsplit(concat.vals.across.rows.and.cols(interaction.tbl, pattern="receptor_hgnc_symbols"), split=",")[[1]]
+  all.receptor.ids <- strsplit(concat.vals.across.rows.and.cols(interaction.tbl, pattern="receptor_ensembl_ids"), split=",")[[1]]
+  
+  lst <- list("interaction.tbl" = interaction.tbl,
+              "all.ligand.hgnc.symbols" = all.ligand.symbols,
+              "all.ligand.ensembl.ids" = all.ligand.ids,
+              "all.receptor.hgnc.symbols" = all.receptor.symbols,
+              "all.receptor.ensembl.ids" = all.receptor.ids
+              )
+  return(lst)
 }

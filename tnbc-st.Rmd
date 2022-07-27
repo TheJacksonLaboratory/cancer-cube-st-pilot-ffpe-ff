@@ -633,7 +633,6 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 # TODO:
 # 1. Calculate bivariateMoran'sI between min(pop1,pop2), gene1 and min(pop1,pop2), gene2 and take max pvalue
 # 2. Plot distribution of ligand-receptor pairs from pub relative to quintiles? FPKMs?
-# 3. Plot distribution of pops (across samples and pops)
 
 i <- 2
 rctd <- rctds[[i]]
