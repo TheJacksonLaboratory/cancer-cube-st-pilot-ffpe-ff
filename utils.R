@@ -140,3 +140,13 @@ calculate.ligand.receptor.pair.expression <- function(expr.mat, ligand.genes, re
   gene.rep <- names(which.min(lr.means))[1]
   expr.mat[gene.rep,]
 }
+
+#' Calculate the quantiles of the mean expression (over samples/cell/spots/columns) of an expression matrix.
+#'  
+#' @param expr.mat An expression matrix (with no assumed units), whose rows are genes (in no particular namespace) and whose columns are samples/cells/spots.
+#' @param quantiles A vector of probability values
+#' @return A data.frame containing the estimated quantiles for each probability value in quantiles (one row, and as many columns as values in quantiles)
+calculate.expression.quantiles <- function(expr.mat, quantiles = seq(0, 1, by=0.1)) {
+  all.means <- rowMeans(expr.mat)
+  quantile(all.means, probs=quantiles)
+}
