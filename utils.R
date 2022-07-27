@@ -118,3 +118,25 @@ read.cellphonedb.ligand.receptors <- function() {
               )
   return(lst)
 }
+
+#' Calculate an "expression" for a ligand-receptor pair.
+#' 
+#' Represents the LR pair expression as the expression of a gene whose mean expression (across samples)
+#' is minimal. This seems similar to the approach taken by cellphonedb, wherein the gene with minimal
+#' expression within a multi-subunit heteromeric complex is used as the expression of that (ligand or receptor)
+#' complex. Here, we are effectively taking the minimum of the ligand and receptor complexes for use as the
+#' LR pair expression.
+#' 
+#' @param expr.mat An expression matrix (with no assumed units), whose rows are genes (in no particular namespace) and whose columns are samples/cells/spots.
+#' @param ligand.genes A vector of ligand genes (in the same namespace as the rows of expr.mat)
+#' @param receptor.genes A vector of receptor genes (in the same namespace as the rows of expr.mat)
+#' @return A vector of expression for the ligand-receptor pair, named with the columns / samples of the expression matrix.
+calculate.ligand.receptor.pair.expression <- function(expr.mat, ligand.genes, receptor.genes) {
+  all.lr.genes <- unique(c(ligand.genes, receptor.genes))
+  all.lr.genes <- all.lr.genes[all.lr.genes %in% rownames(expr.mat)]
+  lr.means <- rowMeans(expr.mat[all.lr.genes,])
+  # Find the gene with the minimum (average) expression. We will use this to represent the
+  # expression of the lr pair
+  gene.rep <- names(which.min(lr.means))[1]
+  expr.mat[gene.rep,]
+}
