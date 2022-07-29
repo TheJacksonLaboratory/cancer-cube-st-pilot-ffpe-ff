@@ -1,3 +1,216 @@
+
+
+
+#' Create a .csv file for the automatic analysis of ST data, as it is described 
+#' here: https://github.com/sdomanskyi/spatialtranscriptomics
+#' 
+#' @param base_dir A base directory where the .csv file will be saved
+#' @param dataset_names The datasets each case includes
+#' @param species_sample Vector describing the species of each sample
+#' 
+#' 
+#' # Write csv file for automatic ST pipeline 
+write.automated.csv.file <- function(base_dir, dataset_names, species_sample) {
+  temp_var<- paste0(base_dir,dataset_names,'/spaceranger/')
+  temp_var2<- replicate(length(dataset_names), "")
+  ST_automated<- data.frame (sample_id= names(dataset_names), species= species_sample, st_data_dir=temp_var, sc_data_dir= temp_var2 )
+  dir.create(file.path(base_dir, '/automatic_analysis/'))
+  temp <- temp <- strsplit(base_dir,"/")
+  curr_datatypes <- tail(temp[[1]], n=1)
+  write.csv(ST_automated,paste0(base_dir,'/automatic_analysis/',curr_datatypes,'.csv'), row.names = FALSE ,quote=FALSE)
+}
+
+#' Get the position information for each spot in a tissue
+#' 
+#' A function that extracts spot position information from the spaceranger output corresponding to 
+#' a single tissue. See https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/images
+#' for a full description.
+#'
+#' @param spaceranger_dir The path to the spaceranger output.
+#' @return A data.frame with columns:
+#'  barcode: The sequence of the barcode associated to the spot.
+#'  in_tissue: Binary, indicating if the spot falls inside (1) or outside (0) of tissue.
+#'  array_row: The row coordinate of the spot in the array from 0 to 77. The array has 78 rows.
+#'  array_col: The column coordinate of the spot in the array. In order to express the orange crate arrangement of the spots, this column index uses even numbers from 0 to 126 for even rows, and odd numbers from 1 to 127 for odd rows. Notice then that each row (even or odd) has 64 spots.
+#'  pxl_row_in_fullres: The row pixel coordinate of the center of the spot in the full resolution image.
+#'  pxl_col_in_fullres: The column pixel coordinate of the center of the spot in the full resolution image.
+get.tissue.position.metadata <- function(spaceranger_dir) {
+  image.dir <- paste0(spaceranger_dir, "/", "spatial/")
+  tissue.positions <- 
+    read.csv(file = file.path(image.dir, "tissue_positions_list.csv"), 
+             col.names = c("barcodes", "tissue", "row", "col", "imagerow", "imagecol"), header = FALSE, 
+             as.is = TRUE, row.names = 1)
+  tissue.positions
+}
+
+#' Create a Seurat object based on the spaceranger baseline file
+#'
+#' @param spaceranger_dirs The directory where the folders for each dataset exist
+#' @param dataset The name of queried dataset
+#' @param spaceranger_bsl_filename The spaceranger file where the details for each Seurat data odject are extracted
+#' @param filter_param Binary variable for filtering tissue positions
+#' @return A Suerat object
+create.Seurat.object <- function(spaceranger_dirs, dataset, spaceranger_bsl_filename, filter_param){
+  obj <- Seurat::Load10X_Spatial(spaceranger_dirs[[dataset]], filename = spaceranger_bsl_filename, filter.matrix = filter_param, slice = dataset)
+  obj$orig.ident <- dataset
+  tissue.positions <- get.tissue.position.metadata(spaceranger_dirs[[dataset]])
+  tissue.positions$spot_type <- "background"
+  tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
+  obj <- AddMetaData(obj, tissue.positions)
+  obj
+}
+
+#' Merge all Seurat objects in one object using harmony (https://portals.broadinstitute.org/harmony/articles/quickstart.html)
+#' and cluster the data based on gene expression data and RUN UMAP
+#' 
+#' @param objs A merged Seurat object including all Seurat objects we want to merge
+#' @param norm_param Choose which normalization assay will be used
+#' @return merged_obj One Seurat object containing all unique Seurat objs
+merge.Seurat.objs <- function(objs, norm_param){
+  merged_obj <- ScaleData(merged_obj, assay=norm_param)
+  VariableFeatures(merged_obj, assay=norm_param) <- unique(unname(unlist(lapply(filtered.objs, function(x) VariableFeatures(x, assay=norm_param)))))
+  merged_obj <- RunPCA(merged_obj, verbose = FALSE)
+  ElbowPlot(merged_obj, ndims = 40)
+  mat <- Seurat::GetAssayData(merged_obj, assay = norm_param)
+  pca <- merged_obj[["pca"]]
+  
+  # Get the total variance:
+  total_variance <- sum(matrixStats::rowVars(as.matrix(mat)))
+  
+  eigValues = (pca@stdev)^2  ## EigenValues
+  varExplained = eigValues / total_variance
+  cumVarExplained <- cumsum(varExplained)
+  
+  merged_obj <- RunHarmony(merged_obj, group.by.vars = make.names("orig ident"))
+  
+  # Pick the number of dimensions based on a flattening of the elbow plot
+  merged_obj <- FindNeighbors(merged_obj,reduction = "harmony", dims = 1:20)
+  merged_obj <- FindClusters(merged_obj, reduction = "harmony",verbose = FALSE)
+  merged_obj <- RunUMAP(merged_obj, reduction = "harmony",dims = 1:20)
+  merged_obj
+}
+
+#' Return count matrix from a Seurat object
+#' 
+#' @param obj A Seurat object.
+#' @return A (sparse) matrix holding the spot counts (i.e., from the "counts" slot)
+get.count.matrix <- function(obj) {
+  as.matrix(x = GetAssayData(object = obj, assay = "Spatial", slot = "counts"))
+}
+
+
+#' Downsample each column of a matrix to a desired total count.
+#'
+#' A function that, independently for each column/cell, uses a multinomial distribution, parameterized 
+#' by the frequency of each gene within that column/cell and the desired total count, to sample a vector of gene counts.
+#' This is in contrast to related functions such as SampleUMI (in Seurat), which applies a binomial to each gene (!?)
+#' and thus only approximates the desired total count, and downsampleMatrix (in DropletUtils), which downsamples to
+#' a fraction of the original number of reads.
+#'
+#' @param expr_mat A (possibly sparse) matrix of counts.
+#' @param tot_cnt The desired number of counts _for each column_
+#' @return A downsample matrix
+downsample.matrix <- function (expr_mat, tot_cnt) 
+{
+  down_sample <- function(x) {
+    prob <- x/sum(x)
+    return(rmultinom(1, tot_cnt, prob))
+  }
+  down_sampled_mat <- apply(expr_mat, 2, down_sample)
+  return(down_sampled_mat)
+}
+
+#' Compute the number of expressed genes/features in a downsampled matrix.
+#' 
+#' A function to downsample the input matrix such that each cell/column has tot_cnt reads and
+#' that reports the _median_ (across cells/columns) number of genes/features with non-zero counts.
+#'
+#' @param expr_mat A (possibly sparse) matrix of counts.
+#' @param tot_cnt The desired number of counts _for each column_
+#' @return The median (across cells/columns) number of genes/features with non-zero counts in the downsampled matrix.
+compute.num.features.at.total.reads <- function(expr_mat, tot_cnt) {
+  ds <- downsample.matrix(expr_mat, tot_cnt)
+  return(median(colSums(ds > 0)))
+}
+
+#' Return most highly-expressed genes
+#' 
+#' A function to return the most highly-expressed genes (i.e., those with highest value) from a matrix.
+#'
+#' @param mat A (sparse) matrix.
+#' @param n.top The number of genes to return.
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A vector of the highest-expressed genes.
+get.top.genes.matrix <- function(mat, n.top = 20, assay = "Spatial", slot = "data") {
+  rs <- rowSums(mat)
+  rs <- rs[order(rs, decreasing=TRUE)]
+  top.genes <- names(rs)[1:n.top]
+  top.genes
+}
+
+#' Return most highly-expressed genes
+#' 
+#' A function to return the most highly-expressed genes (i.e., those with highest value) from a Seurat assay.
+#'
+#' @param obj A Seurat object.
+#' @param n.top The number of genes to return.
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A vector of the highest-expressed genes.
+get.top.genes <- function(obj, n.top = 20, assay = "Spatial", slot = "data") {
+  mat <- GetAssayData(obj, assay = assay, slot = slot)
+  get.top.genes.matrix(mat, n.top = n.top, assay = assay, slot = slot)
+}
+
+#' Return data subsetted by spot tissue status
+#' 
+#' A function to return the subset of the data corresponding to spots that are (or are not) in the tissue
+#'
+#' @param obj A Seurat object.
+#' @param tissue.val Spots with tissue.val for the tissue.col metadata field will be retained.
+#' @param tissue.col The metadata column of the Seurat object holding the tissue status
+#' @param assay The assay from which to access the gene exprssion/values in the Seurat object.
+#' @param slot The slot in the assay form which to access the gene expression/values.
+#' @return A (sparse) matrix of spots that are (or are not) in tissue
+subset.matrix.based.on.tissue.status <- function(obj, tissue.val, tissue.col = "tissue", assay = "Spatial", slot = "data") {
+  cell.subset <- rownames((obj@meta.data)[(obj@meta.data)[,tissue.col] == tissue.val,])
+  mat <- GetAssayData(obj, assay = assay, slot = slot)
+  mat[,cell.subset]
+}
+
+#' Return a dataframe where each row corresponds to a spot,
+#' its barcode is the rowname, its position is in the x and y columns,
+#' and its normalized weights are in the remaining columns, named
+#' according to the corresponding cell type.
+#' @param rctd RCTD object
+#' @return a dataframe
+
+format.rctd.output <- function(rctd) {
+  df <- format.rctd.output_(rctd)
+  df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
+  df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
+  df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
+  cell.types <- c("dPVL", "imPVL")
+  df$PVL <- apply(df[, cell.types], 1, function(row) sum(row))
+  cell.types <- c("iCAFs", "myCAFs")
+  df$CAF <- apply(df[, cell.types], 1, function(row) sum(row))
+  df
+}
+
+#' Identify biotypes from a geneset given the orgnaism
+#' 
+#' @param gene_set A character array carrying the querried gene symbols names
+#' @param gene_db A Mart object database
+#' @return querried.biotypes
+get.biotypes <- function(gene_set,gene_db){
+  gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=gene_set, mart=gene_db)
+  querried.biotypes <- as.data.frame(table(gb$gene_biotype))
+  colnames(querried.biotypes) <- c("biotype", "Freq")
+  o <- order(querried.biotypes$Freq, decreasing=TRUE)
+  querried.biotypes <- querried.biotypes[o,]
+}
+
 #' Try to load package, installing first (via pacman) if necessary
 #' 
 #' @param package A string representing the package to load
@@ -73,7 +286,7 @@ read.cellphonedb.ligand.receptors <- function() {
     colnames(complex.i.tbl) <- paste0(colnames(complex.i.tbl), "_complex", suffixes[i])
     interaction.tbl <- merge(interaction.tbl, complex.i.tbl, all.x = TRUE, by.x = paste0("partner", suffixes[i]), by.y = paste0("complex_name_complex", suffixes[i]))
   }
-
+  
   # Now merge the interaction and protein tables -- to capture cases in which partner_{a,b} is a uniprot id
   # But, first merge the protein and gene tables
   protein.tbl <- merge(protein.tbl, gene.tbl, all.x = TRUE, by = "uniprot")
@@ -115,7 +328,7 @@ read.cellphonedb.ligand.receptors <- function() {
               "all.ligand.ensembl.ids" = all.ligand.ids,
               "all.receptor.hgnc.symbols" = all.receptor.symbols,
               "all.receptor.ensembl.ids" = all.receptor.ids
-              )
+  )
   return(lst)
 }
 
@@ -173,3 +386,4 @@ add.metadata.to.seurat.obj <- function(obj, metadata.df) {
   obj <- AddMetaData(obj, all.meta[, cols.to.add])
   obj
 }
+

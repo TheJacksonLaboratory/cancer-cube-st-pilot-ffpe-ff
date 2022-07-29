@@ -111,6 +111,7 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
     colnames(df) <- c(sample.col, "variable", "value")
     df <- subset(df, !(variable %in% c("x","y")))
     g <- ggplot(data = df, aes_string(x = sample.col, y = "value"))
+    #g <- g+scale_fill_manual(values=colSide)
     g <- g + facet_wrap(as.formula(paste("~", "variable")), scales = "free_y")
     g <- g + xlab("Sample")
   } else {
@@ -124,8 +125,32 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
   # beeswarm takes a long time
   # g <- g + geom_beeswarm()
   # g <- g + geom_boxplot()
-  g <- g + geom_violin()
+  g <- g + geom_violin(trim=FALSE)
+  g <- g +scale_fill_brewer(palette="Dark2")
+  #g +scale_fill_manual(values=c("#d8b365", "#d8b365", "#5ab4ac", "#5ab4ac"))
   g <- g + ylab("Population Fraction")
+  g
+}
+
+#' Plot distribution of a response variable (e.g., UMI count) across spots relative to a dependent variable (e.g., tissue vs background spot status)
+#' 
+#' Create violin/boxplots showing distribution across spots of a user-specified response variable relative to a dependent variable and facted by sample.
+#'
+#' @param df A data.frame holding the response, depenndent, and faceting variables.
+#' @param response.var The variable whose distribution over spots will be plotted.
+#' @param facet.var The faceting variable.
+#' @param dependent.var The variable that the response variable will be plotted as a function of.
+#' @return A ggplot
+plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial", facet.var = "sample.name", dependent.var = "spot_type") {
+  lvls <- unique(df[, facet.var, drop=TRUE])
+  df[,facet.var] <- factor(df[,facet.var], levels=lvls)
+  stat.test <- df %>% group_by_at(facet.var) %>% wilcox_test(as.formula(paste0(response.var, " ~ ", dependent.var)), p.adjust.method = "none")
+  stat.test$p.adj <- p.adjust(stat.test$p, method = "bonferroni")
+  stat.test <- stat.test %>% add_xy_position(x = dependent.var)
+  stat.test$y.position <- log2(stat.test$y.position)
+  stat.test$label <- stars.pval(stat.test$p.adj)
+  g <- ggviolin(df, dependent.var, response.var, facet.by = facet.var, add = "boxplot")
+  g <- g + yscale("log2") + stat_pvalue_manual(stat.test, label="label") + xlab("Spot Type")
   g
 }
 
@@ -136,21 +161,12 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
 #' @param obj A Seurat object.
 #' @param features A vector of strings listing one or more features to plot.
 #' @param legend.name A string name for the legend
-#' @param rescale.legend Boolean indicating whether to divide the values by 1000 in legend scale (obviously hacky, but intended for large numbers like total counts)
 #' @return a ggplot
-plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE) {
-  g <- SpatialFeaturePlot(obj, features = features)
+plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count") {
+  g <- suppressWarnings(SpatialFeaturePlot(obj, features = features) )
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
   g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
-  # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
-  # for the following code, which suppresses 
-  # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
-  # g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
-  if(rescale.legend) {
-    i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
-    g$scales$scales[[i]] <- NULL
-    g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
-  }
+  g <- g + suppressWarnings(scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100)))
   g
 }
 
@@ -181,3 +197,82 @@ plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts =
   }
   plot_grid(plotlist = plts)
 }
+
+#' Create a plot of the raw H&E image
+#' 
+#' A convenience function that wraps Seurat's SpatialFeaturePlot to plot only the overlaid H&E image and not the spots.
+#'
+#' @param obj A Seurat object.
+#' @return a ggplot
+plot.hne <- function(obj, keep.invisible.legend = FALSE) {
+  # Set the opacity/alpha to 0 so that we only see the H&E image.
+  g <- suppressWarnings(SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0)))
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15))
+  if(keep.invisible.legend) {
+    g <- g + theme(legend.position = "bottom") 
+    g <- g + theme(legend.title = element_text(color = "transparent"), legend.text = element_text(color = "transparent"))
+    # g <- g + scale_fill_continuous(fill = guide_legend(override.aes = list(alpha = 1)))
+    # g <- g + scale_fill_gradientn(colors = brewer.pal(10,"Spectral"), guide = guide_legend(override.aes = list(alpha = 1)))
+    # g <- g + guides(fill = guide_legend(override.aes = list(alpha = 1)))
+    g <- g + scale_fill_gradientn(colours = c("white"))
+  } else {
+    g <- g + theme(legend.position = "none")
+  }
+  g
+}
+
+#' Add a title to a cowplot
+#' 
+#' A convenience function that adds a panel with a title above an existing figure.
+#'
+#' @param g A ggplot.
+#' @param title A string title.
+#' @param size Size of title text.
+#' @return A ggplot
+add.title.to.plot <- function(g, title, size = 14) {
+  g.title <- ggdraw() +  draw_label(title, size = size)
+  g <- cowplot::plot_grid(title = g.title, g, nrow=2, rel_heights=c(0.1,1))
+  g
+}
+
+#' Create a VennDiagram plot from a list on genesets
+#' @param temp_list list with the genesets (1-4) we want to plot in the VennDiagram
+#' @param title Title of the plot
+#' @return a ggplot
+
+plot.VennDiagram.list <- function(temp_list, title){
+  g <- ggVennDiagram(temp_list)
+  g <- g + ggtitle(title) 
+  g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+  g <- g + scale_x_continuous(expand = expansion(mult = .2))
+  g
+}
+
+#' Perform GO and KEGG analysis using clusterProfiler library
+#' 
+#' @param geneset A list with genes
+#' @param analysis_set Prefix character describing the geneset
+GO.KEGG.enirhcment.analysis<-function(geneset,analysis_set){
+  yy <- enrichGO(geneset, OrgDb=org.Hs.eg.db, keyType= 'SYMBOL', ont = "ALL", pvalueCutoff=0.01, qvalueCutoff = 0.05)
+  png(paste0(plots_dir, "/", analysis_file_prefix, "GO_gene_analysis_dotplot_", analysis_set ,".png"), width = 800, height = 1600)
+  dotplot(yy, split="ONTOLOGY",color = "qvalue",showCategory = 15) + facet_grid(ONTOLOGY~., scale="free")
+  d <- dev.off()
+  
+  querry_str="detec"
+  yy@result[["Description"]][grepl(querry_str , yy@result[["Description"]], fixed = TRUE)]
+  
+  ontol_set=c("BP","MF","CC")
+  for (ontol in ontol_set){
+    yy <- enrichGO(geneset, OrgDb=org.Hs.eg.db, keyType= 'SYMBOL', ont = ontol, pvalueCutoff=0.01, qvalueCutoff = 0.05)
+    png(paste0(plots_dir, "/", analysis_file_prefix, "GO_gene_analysis_goplot_",ontol,"_" ,analysis_set ,".png"), width = 800, height = 1600)
+    goplot(yy)
+    d <- dev.off()
+  }
+  
+  gene.df <- bitr(geneset, fromType = "SYMBOL", toType = c("ENTREZID" ), OrgDb = org.Hs.eg.db)
+  mkk <- enrichKEGG(gene = gene.df$ENTREZID , organism = 'hsa', pvalueCutoff = 1, qvalueCutoff = 1)
+  png(paste0(plots_dir, "/", analysis_file_prefix, "KEGG_dotplot_",ontol,"_" ,analysis_set ,".png"), width = 800, height = 1600)
+  dotplot(mkk, title = analysis_set)
+  d <- dev.off()
+}
+
