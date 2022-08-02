@@ -97,6 +97,29 @@ filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = T
 unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
 ```
 
+```{r}
+# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png)
+titles <- samples
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nCount_Spatial", legend.name = "# UMIs (K)")
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-counts.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+# Plot the number of feature counts per spot for unfiltered data (in files *unfiltered-spot-features.png)
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nFeature_Spatial", legend.name = "# Features (K)")
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-features.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+stop("stop")
+```
+
 
 ```{r}
 expressed.genes <- 

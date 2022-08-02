@@ -69,22 +69,16 @@ suppressPackageStartupMessages(p_load(GOSemSim))
 suppressPackageStartupMessages(p_load(clusterProfiler))
 ```
 
-
-Setup a parallel execution environment.
-
-```{r}
-num.cores <- detectCores()
-if(!is.na(num.cores) && (num.cores > 1)) {
-  suppressPackageStartupMessages(p_load("doMC"))
-  cat(paste("Registering ", num.cores-1, " cores.\n", sep=""))
-  registerDoMC(cores=(num.cores-1))
-}
-
-```
 Include util functions
 ```{r}
 source("utils.R")
 source("plotting-utils.R")
+```
+
+Setup a parallel execution environment.
+
+```{r}
+num.cores <- setup.parallel.environment()
 ```
 
 Configure variables that point to location of images and directories where analyses and plots will be stored.
@@ -174,31 +168,8 @@ analysis_file_prefix <- paste0(curr_datatypes,"-pilot-")
 
 ```{r}
 # Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
-filtered.objs <- 
-  llply(datasets, 
-        .fun = function(dataset) {
-          # NB: here loading filtered_feature_bc_matrix.h5 with filter.matrix = TRUE
-          # filtered_feature_bc_matrix.h5 should only contain data from spots overlaying tissue,
-          # though I can't find this documented conclusively.
-          # filter.matrix = TRUE definitely filteres coordinates in the Seurat object
-          # according to those that overlap the tissue (i.e., have tissue == 1 in the
-          # tissue_positions_list.csv file -- see code for Read10X_Image, which is called
-          # by Load10X_Spatial)
-          
-          # See this issue for how to set up these individual objects such that we can merge them:
-          # https://github.com/satijalab/seurat/issues/3732
-          # Namely, set the slice and then the orig.ident
-          obj <- create.Seurat.object(spaceranger_dirs, dataset,'filtered_feature_bc_matrix.h5', TRUE)
-          obj
-        })
-
-unfiltered.objs <- 
-  llply(datasets, 
-        .fun = function(dataset) {
-          # NB: here loading raw_feature_bc_matrix.h5 with filter.matrix = FALSE
-          obj <- create.Seurat.object(spaceranger_dirs, dataset,'raw_feature_bc_matrix.h5', FALSE)
-          obj
-        })
+filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
+unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
 ```
 
 
@@ -473,17 +444,9 @@ all.unfiltered.objs <- AddMetaData(all.unfiltered.objs, sample.name.df[, c("samp
 
 
 ```{r}
-# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png.png)
-unfiltered.count.plots <-
-  llply(datasets,
-        .fun = function(dataset) {
-          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nCount_Spatial"), legend.name = "Count")
-          g <- g + theme(legend.text=element_text(size=9))
-          title <- paste0(dataset, "\n", dataset.labels[[dataset]])
-          g <- g + ggtitle(title)
-          g
-        })
-g.all <- plot_grid(plotlist = unfiltered.count.plots)
+# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png)
+titles <- llply(datasets, .fun = function(dataset) { paste0(dataset, "\n", dataset.labels[[datasset]]) })
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nCount_Spatial", legend.name = "# UMIs (K)")
 g.all <- add.title.to.plot(g.all, "All Spots")
 png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-counts.png"))
 print(g.all)
@@ -492,21 +455,13 @@ d <- dev.off()
 
 ```{r}
 # Plot the number of feature counts per spot for unfiltered data (in files *unfiltered-spot-features.png)
-unfiltered.feature.plots <-
-  llply(datasets,
-        .fun = function(dataset) {
-          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nFeature_Spatial"), legend.name = "Feature")
-          g <- g + theme(legend.text=element_text(size=9))
-          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
-          g <- g + ggtitle(title)
-          g
-        })
-g.all <- plot_grid(plotlist = unfiltered.feature.plots)
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nFeature_Spatial", legend.name = "# Features (K)")
 g.all <- add.title.to.plot(g.all, "All Spots")
 png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-features.png"))
 print(g.all)
 d <- dev.off()
 ```
+
 ```{r}
 # Plot the raw H&E images (in files *hne.png)
 hne.plots <-

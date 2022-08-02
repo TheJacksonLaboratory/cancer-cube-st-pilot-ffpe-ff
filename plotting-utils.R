@@ -278,3 +278,26 @@ create.feature.strip.plot <- function(obj, features, order.by = NULL) {
   g <- g + ylab("") + xlab("") + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank())
   return(list("merged" = merged, "g" = g))
 }
+
+#' Create a panel of plots for a given feature, one per sample.
+#'  
+#' @param objs A named list of Seurat 10X spatial objects, each representing a sample.
+#' @param titles A named list of titles for each plot, indexed by the sample name (i.e., name of one of the objs).
+#' @param feature A string giving the name of the feature to plot.
+#' @param legend.name A string giving the name of the legend in each plot.
+#' @return A ggplot
+plot.feature.across.samples <- function(objs, titles, feature = "nCount_Spatial", legend.name = "Count") {
+  samples <- names(objs)
+  names(samples) <- samples
+  plts <-   
+    llply(samples,
+          .fun = function(sample) {
+            g <- plot.spatial(objs[[sample]], features = c(feature), legend.name = legend.name)
+            g <- g + theme(legend.text=element_text(size=9))
+            title <- titles[[sample]]
+            g <- g + ggtitle(title)
+            g
+          })
+  g.all <- plot_grid(plotlist = plts)
+  g.all
+}
