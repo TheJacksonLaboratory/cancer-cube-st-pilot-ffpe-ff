@@ -161,12 +161,21 @@ plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial",
 #' @param obj A Seurat object.
 #' @param features A vector of strings listing one or more features to plot.
 #' @param legend.name A string name for the legend
+#' @param rescale.legend Boolean indicating whether to divide the values by 1000 in legend scale (obviously hacky, but intended for large numbers like total counts)
 #' @return a ggplot
-plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count") {
-  g <- suppressWarnings(SpatialFeaturePlot(obj, features = features) )
+plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE) {
+  g <- SpatialFeaturePlot(obj, features = features)
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
   g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
-  g <- g + suppressWarnings(scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100)))
+  # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
+  # for the following code, which suppresses 
+  # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
+  # g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  if(rescale.legend) {
+    i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
+    g$scales$scales[[i]] <- NULL
+    g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  }
   g
 }
 
@@ -198,48 +207,10 @@ plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts =
   plot_grid(plotlist = plts)
 }
 
-#' Create a plot of the raw H&E image
-#' 
-#' A convenience function that wraps Seurat's SpatialFeaturePlot to plot only the overlaid H&E image and not the spots.
-#'
-#' @param obj A Seurat object.
-#' @return a ggplot
-plot.hne <- function(obj, keep.invisible.legend = FALSE) {
-  # Set the opacity/alpha to 0 so that we only see the H&E image.
-  g <- suppressWarnings(SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0)))
-  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15))
-  if(keep.invisible.legend) {
-    g <- g + theme(legend.position = "bottom") 
-    g <- g + theme(legend.title = element_text(color = "transparent"), legend.text = element_text(color = "transparent"))
-    # g <- g + scale_fill_continuous(fill = guide_legend(override.aes = list(alpha = 1)))
-    # g <- g + scale_fill_gradientn(colors = brewer.pal(10,"Spectral"), guide = guide_legend(override.aes = list(alpha = 1)))
-    # g <- g + guides(fill = guide_legend(override.aes = list(alpha = 1)))
-    g <- g + scale_fill_gradientn(colours = c("white"))
-  } else {
-    g <- g + theme(legend.position = "none")
-  }
-  g
-}
-
-#' Add a title to a cowplot
-#' 
-#' A convenience function that adds a panel with a title above an existing figure.
-#'
-#' @param g A ggplot.
-#' @param title A string title.
-#' @param size Size of title text.
-#' @return A ggplot
-add.title.to.plot <- function(g, title, size = 14) {
-  g.title <- ggdraw() +  draw_label(title, size = size)
-  g <- cowplot::plot_grid(title = g.title, g, nrow=2, rel_heights=c(0.1,1))
-  g
-}
-
 #' Create a VennDiagram plot from a list on genesets
 #' @param temp_list list with the genesets (1-4) we want to plot in the VennDiagram
 #' @param title Title of the plot
 #' @return a ggplot
-
 plot.VennDiagram.list <- function(temp_list, title){
   g <- ggVennDiagram(temp_list)
   g <- g + ggtitle(title) 
@@ -276,3 +247,34 @@ GO.KEGG.enirhcment.analysis<-function(geneset,analysis_set){
   d <- dev.off()
 }
 
+#' Create a panel of plots, each of which shows the value of a feature (gene or metadata) on the y axis
+#' with the spots linearized on the x axis.
+#' 
+#' @param obj A Seurat object.
+#' @param features A vector of strings listing one or more features to plot.
+#'                 Each feature should be a row in the "Spatial" assay or a column in the object's metadata.
+#' @param order.by A vector of strings listing a subset of features used to order the spots on the x axis.
+#' @return a ggplot
+create.feature.strip.plot <- function(obj, features, order.by = NULL) {
+  mat <- Seurat::GetAssayData(obj, assay="Spatial")
+  expr <- cpm(as.matrix(mat), log = FALSE)
+  meta <- obj[[]]
+  common.spots <- intersect(rownames(meta),colnames(mat))
+  mat <- mat[, common.spots]
+  meta <- meta[common.spots, ]
+  merged <- rbind(as.data.frame(mat[rownames(mat) %in% features,]), t(meta[, colnames(meta) %in% features]))
+  m <- reshape2::melt(as.matrix(merged))
+  colnames(m) <- c("feature", "sample", "value")
+  if(!is.null(order.by)) {
+    tmp <- rbind(mat[rownames(mat) %in% order.by,], t(meta[, colnames(meta) %in% order.by]))
+    order.by <- order.by[order.by %in% rownames(tmp)]
+    tmp <- tmp[order.by,]
+    ii <- do.call('order', as.data.frame(t(tmp)))
+    lvls <- colnames(tmp)[ii] 
+    m$sample <- factor(m$sample, levels = lvls)
+    m$feature <- factor(m$feature, levels = rev(c(order.by, features[!(features %in% order.by)])))
+  }
+  g <- ggplot(data = m) + geom_col(aes(x = sample, y = value)) + facet_wrap(~feature, scales="free", ncol = 1)
+  g <- g + ylab("") + xlab("") + theme(axis.ticks.x = element_blank(), axis.text.x = element_blank())
+  return(list("merged" = merged, "g" = g))
+}

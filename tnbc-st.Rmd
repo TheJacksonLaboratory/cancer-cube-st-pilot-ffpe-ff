@@ -432,8 +432,8 @@ plot.ligand.receptor <- function(rctd, pop.weights, expr, ligand.pop, receptor.p
 ```
 
 ```{r}
-g <- plot_puck_continuous(rctd@spatialRNA, colnames(rctd@spatialRNA@counts), as.matrix(pop.weights)[, pop], size = 1, ylimit = c(0, mx))
-g <- plot.population.weights(rctd, pop.weights, cell.types.to.plot, obj = obj, show.hne = TRUE, use.absolute.scale = TRUE)
+# g <- plot_puck_continuous(rctd@spatialRNA, colnames(rctd@spatialRNA@counts), as.matrix(pop.weights)[, pop], size = 1, ylimit = c(0, mx))
+# g <- plot.population.weights(rctd, pop.weights, cell.types.to.plot, obj = obj, show.hne = TRUE, use.absolute.scale = TRUE)
 ```
 
 
@@ -638,10 +638,19 @@ pop.scor.meta <- ddply(pop.scor, .variables = c("pop1", "pop2"), .fun = function
 pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 ```
 
+```{r}
+```
+
 
 ```{r}
 # WORKING
-
+bar <- (expr[c("MYC","ITGAE"),])
+foo <- reshape2::melt(bar)
+foo$Var2 <- factor(foo$Var2, levels = lvls)
+ggplot(data = foo) + geom_col(aes(x = Var2, y = log2(value))) + facet_wrap(~Var1, scales="free")
+ii<-do.call('order', as.data.frame(t(bar)))
+bar <- bar[,ii]
+lvls <- colnames(bar)
 # TODO:
 # 1. Strip plots (columns are spots) of: -- also add cancer and order spots by cancer, then myeloid, then CD14, then etc. 
 # 1a. iCD14+ (CD14-TLR4-CD163-SIGLEC); sCD14+ (CD14-CD2-LY75)
@@ -650,6 +659,10 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 # 4. Look for T cell signalling involving CXCL13 and either myeloid or cancer cells
 # 5. Look for interactions with myeloid cells
 # 6. Can we do de novo discovery? Previously was using those from publication.
+
+features <- c("Epithelial", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1")
+order.by <- features
+m <- create.feature.split.plot(obj, features, order.by)
 
 # 1. Compute all LR expressions in a sample
 # 2. Try computing boxplot of all LR within a sample with quantiles
@@ -660,6 +673,10 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 # 1. Calculate bivariateMoran'sI between min(pop1,pop2), gene1 and min(pop1,pop2), gene2 and take max pvalue
 # 2. Plot distribution of ligand-receptor pairs from pub relative to quintiles? FPKMs?
 
+flag <- merged["Myeloid", ] > 0.2
+tmp <- merged[, flag]
+flag <- !(rownames(tmp) %in% c("Myeloid", "Epithelial"))
+tmp[flag, ] <- t(apply(tmp[flag,], 1, "/", as.numeric(tmp["Myeloid",])))
 
 i <- 2
 rctd <- rctds[[i]]
@@ -690,7 +707,7 @@ pop2 <- "CD4+ T-cells"
 g1 <- "BMP4"
 g2 <- "BMPR1A"
 pop1 <- "Stromal"
-pop2 <- "Epethial_Basal_Cycling"
+pop2 <- "Epithelial_Basal_Cycling"
 
 min.pop <- unlist(apply(pop.weights[, c(pop1, pop2)], 1, min))
 df <- data.frame(min.pop = min.pop, g1 = expr[g1,,drop=TRUE], g2 = expr[g2,,drop=TRUE])
