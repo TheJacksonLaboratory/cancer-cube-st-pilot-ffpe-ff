@@ -387,3 +387,70 @@ add.metadata.to.seurat.obj <- function(obj, metadata.df) {
   obj
 }
 
+#' Enable parallel execution.
+#'  
+#' @return The number of cores available for parallel execution.
+setup.parallel.environment <- function() {
+  num.cores <- detectCores()
+  if(!is.na(num.cores) && (num.cores > 1)) {
+    suppressPackageStartupMessages(p_load("doMC"))
+    cat(paste("Registering ", num.cores-1, " cores.\n", sep=""))
+    registerDoMC(cores=(num.cores-1))
+  }
+  num.cores
+}
+
+#' Create a Seurat object for a Visium 10X dataset.
+#'  
+#' @param sample.name A string name for the sample / dataset.
+#' @param spaceranger.dir A string directory holding the files filtered_feature_bc_matrix.h5 and
+#'                        raw_feature_bc_matrix.h5 and the subdirectory spatial. This is likely
+#'                        the outs directory created by spaceranger count or the equivalent.
+#' @param filter.spots A boolean indicating whether to include all spots (filter.spots = FALSE) or only
+#'                     those spots overlapping the tissue (filter.spots = TRUE)
+#' @return A Seurat object, annotated with the position and status (spot_type = "tissue" or "background") for each spot.
+create.visium.seurat.object <- function(sample.name, spaceranger.dir, filter.spots = TRUE) {
+  # load filtered_feature_bc_matrix.h5 with filter.matrix = TRUE or
+  #      raw_feature_bc_matrix.h5 with filter.matrix = FALSE
+  # filtered_feature_bc_matrix.h5 should only contain data from spots overlaying tissue,
+  # though I can't find this documented conclusively.
+  # filter.matrix = TRUE definitely filters coordinates in the Seurat object
+  # according to those that overlap the tissue (i.e., have tissue == 1 in the
+  # tissue_positions_list.csv file -- see code for Read10X_Image, which is called
+  # by Load10X_Spatial)
+  
+  # See this issue for how to set up these individual objects such that we can merge them:
+  # https://github.com/satijalab/seurat/issues/3732
+  # Namely, set the slice and then the orig.ident
+  filename <- 'filtered_feature_bc_matrix.h5'
+  if(!filter.spots) {
+    filename <- 'raw_feature_bc_matrix.h5'
+  }
+  obj <- Seurat::Load10X_Spatial(spaceranger.dir, filename = filename, filter.matrix = filter.spots, slice = sample.name)
+  obj$orig.ident <- sample.name
+  tissue.positions <- get.tissue.position.metadata(spaceranger.dir)
+  tissue.positions$spot_type <- "background"
+  tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
+  obj <- AddMetaData(obj, tissue.positions)
+  obj  
+}
+
+#' Create Seurat objects, one for eachVisium 10X sample / dataset.
+#'  
+#' @param spaceranger.dirs A named list, where each entry corresponds to a sample and provides 
+#'                         a string directory holding the files filtered_feature_bc_matrix.h5 and
+#'                         raw_feature_bc_matrix.h5 and the subdirectory spatial. This is likely
+#'                         the outs directory created by spaceranger count or the equivalent.
+#' @param filter.spots A boolean indicating whether to include all spots (filter.spots = FALSE) or only
+#'                     those spots overlapping the tissue (filter.spots = TRUE)
+#' @return A named list of Seurat objects, each annotated with the position and status 
+#'         (spot_type = "tissue" or "background") for each spot. The names are those of spaceranger.dirs.
+create.visium.seurat.objects <- function(spaceranger.dirs, filter.spots = TRUE) {
+  samples <- names(spaceranger.dirs)
+  names(samples) <- samples
+  objs <-
+    llply(samples, .fun = function(sample.name) {
+      create.visium.seurat.object(sample.name, spaceranger.dirs[[sample.name]], filter.spots = filter.spots)
+    })
+  objs
+}
