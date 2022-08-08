@@ -141,69 +141,9 @@ tnbc.cell.types <- tnbc.cell.types[colnames(tnbc.cnts)]
 
 
 ```{r}
-#' Get the position information for each spot in a tissue
-#' 
-#' A function that extracts spot position information from the spaceranger output corresponding to 
-#' a single tissue. See https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/images
-#' for a full description.
-#'
-#' @param spaceranger_dir The path to the spaceranger output.
-#' @return A data.frame with columns:
-#'  barcode: The sequence of the barcode associated to the spot.
-#'  in_tissue: Binary, indicating if the spot falls inside (1) or outside (0) of tissue.
-#'  array_row: The row coordinate of the spot in the array from 0 to 77. The array has 78 rows.
-#'  array_col: The column coordinate of the spot in the array. In order to express the orange crate arrangement of the spots, this column index uses even numbers from 0 to 126 for even rows, and odd numbers from 1 to 127 for odd rows. Notice then that each row (even or odd) has 64 spots.
-#'  pxl_row_in_fullres: The row pixel coordinate of the center of the spot in the full resolution image.
-#'  pxl_col_in_fullres: The column pixel coordinate of the center of the spot in the full resolution image.
-get.tissue.position.metadata <- function(spaceranger_dir) {
-  image.dir <- paste0(spaceranger_dir, "/", "spatial/")
-  tissue.positions <- 
-    read.csv(file = file.path(image.dir, "tissue_positions_list.csv"), 
-             col.names = c("barcodes", "tissue", "row", "col", "imagerow", "imagecol"), header = FALSE, 
-             as.is = TRUE, row.names = 1)
-  tissue.positions
-}
-```
-
-
-```{r}
 # Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
-filtered.objs <- 
-  llply(datasets, 
-        .fun = function(dataset) {
-          # NB: here loading filtered_feature_bc_matrix.h5 with filter.matrix = TRUE
-          # filtered_feature_bc_matrix.h5 should only contain data from spots overlaying tissue,
-          # though I can't find this documented conclusively.
-          # filter.matrix = TRUE definitely filteres coordinates in the Seurat object
-          # according to those that overlap the tissue (i.e., have tissue == 1 in the
-          # tissue_positions_list.csv file -- see code for Read10X_Image, which is called
-          # by Load10X_Spatial)
-          
-          # See this issue for how to set up these individual objects such that we can merge them:
-          # https://github.com/satijalab/seurat/issues/3732
-          # Namely, set the slice and then the orig.ident
-          obj <- Seurat::Load10X_Spatial(spaceranger_dirs[[dataset]], filename = 'filtered_feature_bc_matrix.h5', filter.matrix = TRUE, slice = dataset)
-          obj$orig.ident <- dataset
-          tissue.positions <- get.tissue.position.metadata(spaceranger_dirs[[dataset]])
-          tissue.positions$spot_type <- "background"
-          tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
-          obj <- AddMetaData(obj, tissue.positions)
-          obj
-        })
-
-unfiltered.objs <- 
-  llply(datasets, 
-        .fun = function(dataset) {
-          # NB: here loading raw_feature_bc_matrix.h5 with filter.matrix = FALSE
-          obj <- Seurat::Load10X_Spatial(spaceranger_dirs[[dataset]], filename = 'raw_feature_bc_matrix.h5', filter.matrix = FALSE, slice = dataset)
-          obj$orig.ident <- dataset
-          tissue.positions <- get.tissue.position.metadata(spaceranger_dirs[[dataset]])
-          tissue.positions$spot_type <- "background"
-          tissue.positions[tissue.positions$tissue == 1, "spot_type"] <- "tissue"
-          obj <- AddMetaData(obj, tissue.positions)
-          obj
-        })
-
+filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
+unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
 ```
 
 ```{r}
@@ -215,7 +155,7 @@ rctds <-
           rds.file <- paste0(analysis_dir, "/", dataset, "-rctd.rds")
           if(!file.exists(rds.file)) {
             obj <- filtered.objs[[dataset]]
-            st.counts <- GetAssayData(obj, slot="counts")
+            st.counts <- GetAssayData(obj, assay="Spatial", slot="counts")
             st.coords <- obj[[]][, c("col", "row")]
             colnames(st.coords) <- c("x","y")
             nUMI <- colSums(st.counts) # In this case, total counts per pixel is nUMI
@@ -242,7 +182,7 @@ rctds <-
 # and its normalized weights are in the remaining columns, named
 # according to the corresponding cell type.
 format.rctd.output <- function(rctd) {
-  df <- format.rctd.output_(rctd)
+  df <- format.rctd.output_(rctd, normalize = FALSE)
   df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
   df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
   df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
@@ -340,6 +280,12 @@ filtered.objs <-
           obj <- add.metadata.to.seurat.obj(filtered.objs[[nm]], md.df)
           obj
         })
+```
+```{r}
+g <- plot.biotypes.across.samples(filtered.objs)
+png(paste0(plots_dir,"read-proportion-biotype-vs-sample.png"),height=2*480)
+print(g)
+d <- dev.off()
 ```
 
 
@@ -664,6 +610,16 @@ features <- c("Epithelial", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "
 order.by <- features
 m <- create.feature.split.plot(obj, features, order.by)
 
+# TODO:
+genes <- unique(c("CD8A", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1", "PTPRC", "CD3E", "CD8A", "ITGAE", "CXCL13"))
+                                                                  
+# 1. Function that:
+#    1a. Plots gene (row) boxplots (expr col)
+#    1b. Plots density along with quintiles (bottom panel)
+# 2. Function that does above over samples
+# 3. Call on Karolina genes
+# 4. Call on LR genes
+# 5. Call on transcription factor genes
 # 1. Compute all LR expressions in a sample
 # 2. Try computing boxplot of all LR within a sample with quantiles
 # 3. Compute median and ranges within sample
@@ -1190,6 +1146,11 @@ colSide <- as.vector(unlist(color_list[unlist(dataset.labels[levels(bar$sample)]
 heatmap.2(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"), ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)),xlab="Cluster", ylab="Sample",margins=c(12,8),trace="none",lhei=c(1, 6),keysize=1,key.title="Proportion")
 d <- dev.off()
 ```
+
+```{r}
+
+```
+
 
 ```{r}
 

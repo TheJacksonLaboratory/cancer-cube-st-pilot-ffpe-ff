@@ -136,7 +136,7 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
 #' 
 #' Create violin/boxplots showing distribution across spots of a user-specified response variable relative to a dependent variable and facted by sample.
 #'
-#' @param df A data.frame holding the response, depenndent, and faceting variables.
+#' @param df A data.frame holding the response, dependent, and faceting variables.
 #' @param response.var The variable whose distribution over spots will be plotted.
 #' @param facet.var The faceting variable.
 #' @param dependent.var The variable that the response variable will be plotted as a function of.
@@ -189,9 +189,12 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
 #' @param include.umi.cnts Boolean indicating whether to include a plot of UMI counts
 #' @param include.feature.cnts Boolean indicating whether to include a plot of feature / gene counts
 #' @return a ggplot
-plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE) {
-  names(features) <- features
-  plts <- lapply(features, function(feature) plot.spatial(obj, features = c(feature), legend.name = feature, rescale.legend = FALSE))
+plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, ...) {
+  plts <- NULL
+  if(!is.null(features) && (length(features) > 0)) {
+    names(features) <- features
+    plts <- lapply(features, function(feature) plot.spatial(obj, features = c(feature), legend.name = feature, rescale.legend = FALSE))
+  }
   if(include.feature.cnts) {
     p <- plot.spatial(obj, "nFeature_Spatial", "# Features (K)", rescale.legend = TRUE)
     plts <- c(list(p), plts)
@@ -204,7 +207,7 @@ plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts =
     p <- plot.hne(obj, keep.invisible.legend = TRUE)
     plts <- c(list(p), plts)
   }
-  plot_grid(plotlist = plts)
+  plot_grid(plotlist = plts, ...)
 }
 
 #' Create a VennDiagram plot from a list on genesets
@@ -300,4 +303,72 @@ plot.feature.across.samples <- function(objs, titles, feature = "nCount_Spatial"
           })
   g.all <- plot_grid(plotlist = plts)
   g.all
+}
+
+plot.gene.expression.distribution.relative.to.quantiles <- function(raw.cnt.mat, expr.mat, genes) {
+  # expr.mat <- cpm(raw.cnt.mat, log = TRUE)
+  nz.genes <- rowSums(raw.cnt.mat) > 0
+  raw.cnt.mat <- raw.cnt.mat[nz.genes, ]
+  expr.mat <- expr.mat[nz.genes, ]
+
+  qs <- calculate.expression.quantiles(raw.cnt.mat)
+  
+
+  mat <- raw.cnt.mat
+  genes <- genes[genes %in% rownames(mat)]
+  summarized.expr = apply(mat, 1, median)
+  all.summarized.expr.df <- data.frame(gene = rownames(mat), expr = as.numeric(summarized.expr))
+  all.summarized.expr.df <- all.summarized.expr.df[order(all.summarized.expr.df$expr, decreasing=TRUE),]
+  g2 <- ggplot(data = all.summarized.expr.df, aes(x = expr))
+  g2 <- g2 + geom_density()
+  
+  gene.df <- reshape2::melt(as.matrix(expr.mat[genes, ]))
+  gene.df <- reshape2::melt(as.matrix(raw.cnt.mat[genes, ]))
+  colnames(gene.df) <- c("gene", "sample", "expr")
+  g1 <- ggplot(data = gene.df, aes(x = expr, y = gene)) + geom_boxplot()
+
+} 
+
+#' Plot the fraction of reads by biotype within each sample.
+#'  
+#' @param objs A named list of Seurat 10X spatial objects, each representing a sample.
+#' @return A ggplot
+plot.biotypes.across.samples <- function(objs) {
+  frac.df <-
+    ldply(objs,
+          .fun = function(obj) {
+            mat <- GetAssayData(obj, assay="Spatial", slot="counts")
+            df <- as.data.frame(mat)
+            df[, "gene"] <- rownames(df)
+            gb <- get.biotypes_(df$gene, gene_db)
+            gb <- condense.biotypes(gb)
+            df <- merge(df, gb, all.x = TRUE)
+            cnts <- ddply(df, .variables = c("gene_biotype"),
+                          .fun = function(df.biotype) {
+                            colSums(df.biotype[, !(colnames(df.biotype) %in% c("gene", "gene_biotype"))])
+                          })
+            rownames(cnts) <- cnts$gene_biotype
+            numeric.cols <- colnames(cnts)[!(colnames(cnts) %in% c("gene_biotype"))]
+            fracs <- apply(cnts[, numeric.cols], 2, function(vec) vec / sum(vec))
+            rownames(fracs) <- rownames(cnts)
+            t(fracs)
+          })
+  colnames(frac.df)[1] <- "sample"
+
+  numeric.cols <- colnames(frac.df)[!(colnames(frac.df) %in% c("sample", "gene_biotype"))]
+  frac.sums <- colSums(frac.df[, numeric.cols])
+  frac.sums <- frac.sums[order(frac.sums, decreasing=TRUE)]
+  max.biotypes.to.display <- 5
+  other.biotypes <- names(frac.sums)[(max.biotypes.to.display+1):length(frac.sums)]
+  fracs <- cbind(frac.df, other = rowSums(frac.df[, other.biotypes]))
+  biotype.cols <- c(names(frac.sums)[1:max.biotypes.to.display],"other")
+  #fracs <- as.data.frame(fracs)
+  foo <- reshape2::melt(fracs[, c("sample", biotype.cols)])
+  colnames(foo) <- c("sample", "biotype", "proportion")
+  foo$proportion <- foo$proportion * 100
+  foo$biotype <- factor(foo$biotype, biotype.cols)
+  g <- ggplot(data = foo, aes(x = biotype, y = proportion)) + geom_boxplot() + facet_wrap(~ sample, ncol=2)
+  g <- g + theme(text = element_text(size = 20), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  g <- g + xlab("Biotype") + ylab("Proportion")
+  g
 }

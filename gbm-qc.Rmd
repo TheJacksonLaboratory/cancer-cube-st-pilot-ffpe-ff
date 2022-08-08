@@ -73,7 +73,7 @@ Configure variables that point to location of images and directories where analy
 ```{r}
 raw_base_dir <- "/projects/compsci/whitebr/kyuson/processed/"
 base_dir <- "/projects/compsci/whitebr/kyuson/seurat/"
-samples <- c("MYV-10")
+samples <- paste0("MYV-", 1:12)
 names(samples) <- samples
 spaceranger_dirs <- llply(samples, .fun = function(sample) paste0(raw_base_dir, sample, "/outs/"))
 ```
@@ -115,6 +115,35 @@ png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-features.png")
 print(g.all)
 d <- dev.off()
 ```
+
+```{r}
+# Plot H&E, UMIs, and features together
+for(sample in samples) {
+  g <- plot.features(unfiltered.objs[[sample]], features = NULL, include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = TRUE, nrow=1)
+  g <- add.title.to.plot(g, sample)
+  png(paste0(plots_dir, "/", analysis_file_prefix, sample, "-unfiltered-spot-spatial-qc.png"), width = 2 * 480)
+  print(g)
+  d <- dev.off()
+}
+```
+
+```{r}
+all.unfiltered.objs <- concatenate.seurat.objects(unfiltered.objs) 
+```
+
+
+```{r}
+# Plot the distribution of UMI counts and gene counts over spots, as a function of whether those spots and within the tissue or outside of it (in file *count-and-feature-dist.png)
+tbl <- all.unfiltered.objs[[]]
+g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial", facet.var = "orig.ident") + ylab("UMI Counts (log2)")
+g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial", facet.var = "orig.ident") + ylab("Feature Counts (log2)")
+g <- plot_grid(g.cnt, g.feature, nrow=1, labels = "AUTO")
+png(paste0(plots_dir, "/", analysis_file_prefix, "count-and-feature-dist.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+```
+
+
 
 ```{r}
 stop("stop")
@@ -653,92 +682,6 @@ all.unfiltered.objs <- AddMetaData(all.unfiltered.objs, sample.name.df[, c("samp
 
 
 ```{r}
-# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png.png)
-unfiltered.count.plots <-
-  llply(datasets,
-        .fun = function(dataset) {
-          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nCount_Spatial"), legend.name = "UMI Count (k)")
-          g <- g + theme(legend.text=element_text(size=15))
-          g
-        })
-```
-
-```{r}
-# Plot the number of feature counts per spot for unfiltered data (in files *unfiltered-spot-features.png)
-unfiltered.feature.plots <-
-  llply(datasets,
-        .fun = function(dataset) {
-          g <- plot.spatial(unfiltered.objs[[dataset]], features = c("nFeature_Spatial"), legend.name = "Gene Count (k)")
-          g <- g + theme(legend.text=element_text(size=15))
-          g
-        })
-```
-
-```{r}
-# Plot the raw H&E images (in files *hne.png)
-hne.plots <-
-  llply(datasets,
-        .fun = function(dataset) {
-          g <- plot.hne(unfiltered.objs[[dataset]], keep.invisible.legend = TRUE)
-          g
-        })
-```
-
-```{r}
-# Make plots of H&E and UMI and feature count overlays
-for(pt in names(samples.by.patient)) {
-  plts <- llply(samples.by.patient[[pt]],
-                .fun = function(sample) {
-                  g <- plot_grid(hne.plots[[sample]], unfiltered.count.plots[[sample]], unfiltered.feature.plots[[sample]], byrow=FALSE, ncol=3)
-                  g <- add.title.to.plot(g, sample, size = 20)
-                  g
-                })
-  g <- plot_grid(plotlist = plts, ncol=1)
-  png(paste0(plots_dir, "/", analysis_file_prefix, pt, "-hne-umis-and-features.png"), width = 3 * 480, height = 2 * 480)
-  print(g)
-  d <- dev.off()
-}
-```
-
-
-```{r}
-#' Plot distribution of a response variable (e.g., UMI count) across spots relative to a dependent variable (e.g., tissue vs background spot status)
-#' 
-#' Create violin/boxplots showing distribution across spots of a user-specified response variable relative to a dependent variable and facted by sample.
-#'
-#' @param df A data.frame holding the response, depenndent, and faceting variables.
-#' @param response.var The variable whose distribution over spots will be plotted.
-#' @param facet.var The faceting variable.
-#' @param dependent.var The variable that the response variable will be plotted as a function of.
-#' @return A ggplot
-plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial", facet.var = "sample.name", dependent.var = "spot_type") {
-  lvls <- unique(df[, facet.var, drop=TRUE])
-  df[,facet.var] <- factor(df[,facet.var], levels=lvls)
-  stat.test <- df %>% group_by_at(facet.var) %>% wilcox_test(as.formula(paste0(response.var, " ~ ", dependent.var)), p.adjust.method = "none")
-  stat.test$p.adj <- p.adjust(stat.test$p, method = "bonferroni")
-  stat.test <- stat.test %>% add_xy_position(x = dependent.var)
-  stat.test$y.position <- log2(stat.test$y.position)
-  stat.test$label <- stars.pval(stat.test$p.adj)
-  g <- ggviolin(df, dependent.var, response.var, facet.by = facet.var, add = "boxplot")
-  g <- g + yscale("log2") + stat_pvalue_manual(stat.test, label="label") + xlab("Spot Type")
-  g
-}
-```
-
-
-```{r}
-# Plot the distribution of UMI counts and gene counts over spots, as a function of whether those spots and within the tissue or outside of it (in file *count-and-feature-dist.png)
-tbl <- all.unfiltered.objs@meta.data
-tbl <- merge(tbl, dataset.metadata.df)
-# tbl <- tbl[order(tbl$sample.name, tbl$type, tbl$sample.name, decreasing=TRUE),]
-tbl$sample <- factor(tbl$sample, levels = sample.lvls)
-tbl$sample.label <- paste0(tbl$sample.name, "\n", tbl$type)
-g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial", facet.var = "sample.label") + ylab("UMI Counts (log2)")
-g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial", facet.var = "sample.label") + ylab("Feature Counts (log2)")
-g <- plot_grid(g.cnt, g.feature, nrow=1, labels = "AUTO")
-png(paste0(plots_dir, "/", analysis_file_prefix, "count-and-feature-dist.png"), width = 2 * 480)
-print(g)
-d <- dev.off()
 
 ```
 ```{r}

@@ -198,17 +198,56 @@ format.rctd.output <- function(rctd) {
   df
 }
 
-#' Identify biotypes from a geneset given the orgnaism
+#' Identify biotype of each gene in a a geneset
 #' 
 #' @param gene_set A character array carrying the querried gene symbols names
 #' @param gene_db A Mart object database
-#' @return querried.biotypes
+#' @return A data.frame giving the biotype of each gene in the gene_set
+get.biotypes_ <- function(gene_set,gene_db){
+  gb <- getBM(attributes=c("external_gene_name", "gene_biotype", "chromosome_name"),filters = c("external_gene_name"), values=gene_set, mart=gene_db)
+  # Label mitochondrial genes as any encoded on the "MT" chromosome
+  flag <- grepl(gb$chromosome_name, pattern="MT", ignore.case = TRUE)
+  gb[flag, "gene_biotype"] <- "MT"
+  # Label ribosomal proteins (RP) as any with gene name Rps or Rpl.
+  # Note that these are not the same as ribosomal (t)RNAs, which should be listed as rRNA by biomart
+  flag <- grepl(gb$external_gene_name, pattern="^Rp[sl]", ignore.case = TRUE) # for mouse
+  flag <- flag | grepl(gb$external_gene_name, pattern="^RP[SL]", ignore.case = TRUE) # for human
+  gb[flag, "gene_biotype"] <- "RP"
+  colnames(gb) <- c("gene", "gene_biotype", "chromosome_name")
+  gb <- gb[, c("gene", "gene_biotype")]
+  df <- data.frame(gene = gene_set)
+  df <- merge(df, gb, all.x = TRUE)
+  df
+}
+
+#' Identify frequency of each biotype within a geneset
+#' 
+#' @param gene_set A character array carrying the querried gene symbols names
+#' @param gene_db A Mart object database
+#' @return A data.frame giving the count (Freq) of each biotype in gene_set
 get.biotypes <- function(gene_set,gene_db){
-  gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=gene_set, mart=gene_db)
+  gb <- get.biotypes_(gene_set, gene_db)
   querried.biotypes <- as.data.frame(table(gb$gene_biotype))
   colnames(querried.biotypes) <- c("biotype", "Freq")
   o <- order(querried.biotypes$Freq, decreasing=TRUE)
   querried.biotypes <- querried.biotypes[o,]
+}
+
+#' Simplify biotypes by condensing several into large categories
+#' 
+#' @param df A data.frame with a biotype column (e.g., with each row corresponding to a gene)
+#' @param biotype.col The name of the biotype column in df
+#' @return df modified so that immunoglobulin-related biotypes (IG_) are condensed into an IG biotype,
+#'            T-cell receptor-related biotypes (TR_) are condensed into a TR biotype,
+#'            and NA biotypes are converted to unknown.
+condense.biotypes <- function(df, biotype.col = "gene_biotype") {
+  flag <- is.na(df[, biotype.col])
+  df[flag, biotype.col] <- "unknown"
+  flag <- grepl(df[, biotype.col], pattern="IG_")
+  df[flag, biotype.col] <- "IG"
+  flag <- grepl(df[, biotype.col], pattern="TR_")
+  df[flag, biotype.col] <- "TR"
+  df
 }
 
 #' Try to load package, installing first (via pacman) if necessary
@@ -225,14 +264,17 @@ p_load_ <- function(package) {
 #' Create a panel of plots, each showing deconvolved fractions of a particular population.
 #' 
 #' @param rctd An RCTD object, from the spacexr package.
+#' @param normalize Boolean indicating whether weights should be normalized to sum to 1.
 #' @return A data frame whose rows are spots, whose columns are deconvolved populations, and whose 
 #'                    entries are the (predicted) fraction of a population in a given spot.
 #'                    Also adds columns x and y, holding spatial coordinates of spots.
-format.rctd.output_ <- function(rctd) {
+format.rctd.output_ <- function(rctd, normalize = TRUE) {
   barcodes <- colnames(rctd@spatialRNA@counts)
   weights <- rctd@results$weights
-  norm_weights <- normalize_weights(weights)
-  df <- as.data.frame(norm_weights)
+  if(normalize) {
+    weights <- normalize_weights(weights)
+  }
+  df <- as.data.frame(weights)
   df$x <- rctd@spatialRNA@coords$x
   df$y <- rctd@spatialRNA@coords$y
   df
@@ -453,4 +495,32 @@ create.visium.seurat.objects <- function(spaceranger.dirs, filter.spots = TRUE) 
       create.visium.seurat.object(sample.name, spaceranger.dirs[[sample.name]], filter.spots = filter.spots)
     })
   objs
+}
+
+#' Concatenate Seurat objects into one object
+#' 
+#' @param objs A list of Seurat objects
+#' @return A single Seurat object that is the concatenation of the input objects
+concatenate.seurat.objects <- function(objs) {
+  all.objs <- Reduce(merge, objs)
+  Idents(all.objs) <- all.objs$orig.ident
+  all.objs
+}
+
+#' Identify biotypes from a geneset given the orgnaism
+#' 
+#' @param gene_set A character array carrying the querried gene symbols names
+#' @param gene_db A Mart object database
+#' @return querried.biotypes
+get.annotationhub.biotypes <- function(gene_set){
+  stop("Not implemented")
+  ah <- AnnotationHub()
+  human_ens <- query(ah, c("Homo sapiens", "EnsDb"))
+  foo <- human_ens[["AH75011"]]
+  df <- genes(foo, return.type = "data.frame")
+  gb <- getBM(attributes=c("external_gene_name", "gene_biotype"),filters = c("external_gene_name"), values=gene_set, mart=gene_db)
+  querried.biotypes <- as.data.frame(table(gb$gene_biotype))
+  colnames(querried.biotypes) <- c("biotype", "Freq")
+  o <- order(querried.biotypes$Freq, decreasing=TRUE)
+  querried.biotypes <- querried.biotypes[o,]
 }
