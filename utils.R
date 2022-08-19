@@ -637,3 +637,41 @@ get.per.spot.saturation.stats <- function(mol.info.file) {
   res <- res[, !(colnames(res) == "barcode")]
   res
 }
+
+#' Find the empirical distance between spots in the x and y directions.
+#' 
+#' It makes most sense for the input Seurat object to be unfiltered (by background vs tissue/foreground)
+#' so that there aren't gaps between rows / columns. Nevertheless, the code attempts to
+#' overcome this possibility by taking the most common distance between neighboring spots.
+#' 
+#' @param obj A Seurat object. 
+#' @return A 2-tuple with elements:
+#'           dx: the separation between neighboring spots in the x dimension
+#'           dy: the separation between neighboring spots in the y dimension
+get.visium.spot.distance.separation <- function(obj) {
+  # Within each row, calculate the distance between spots ordered by column.
+  tmp <- ddply(obj[[]], .variables=c("row"), 
+               .fun = function(df) {
+                 o <- order(df$col, decreasing=FALSE)
+                 df <- df[o,]
+                 diffs = unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagecol"] - df[i,"imagecol"]))
+                 na.omit(data.frame(diff=diffs))
+               })
+  # Take the most common such distance between columns of neighboring spots as the
+  # separation in the x direction -- dx
+  tbl <- table(tmp$diff)
+  dx <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
+  # Within each col, calculate the distance between spots ordered by row.
+  tmp <- ddply(obj[[]], .variables=c("col"), 
+               .fun = function(df) {
+                 o <- order(df$row, decreasing=FALSE)
+                 df <- df[o,]
+                 diffs = unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagerow"] - df[i,"imagerow"]))
+                 na.omit(data.frame(diff=diffs))
+               })
+  # Take the most common such distance between rows of neighboring spots as the
+  # separation in the y direction -- dy
+  tbl <- table(tmp$diff)
+  dy <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
+  return(c(dx, dy))
+}
