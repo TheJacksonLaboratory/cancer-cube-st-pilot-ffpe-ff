@@ -5,7 +5,6 @@
 #' here: https://github.com/sdomanskyi/spatialtranscriptomics
 #' 
 #' @param base_dir A base directory where the .csv file will be saved
-#' @param dataset_names The datasets each case includes
 #' @param species_sample Vector describing the species of each sample
 #' 
 #' 
@@ -14,7 +13,7 @@ write.automated.csv.file <- function(base_dir, dataset_names, species_sample) {
   temp_var<- paste0(base_dir,dataset_names,'/spaceranger/')
   temp_var2<- replicate(length(dataset_names), "")
   ST_automated<- data.frame (sample_id= names(dataset_names), species= species_sample, st_data_dir=temp_var, sc_data_dir= temp_var2 )
-  dir.create(file.path(base_dir, '/automatic_analysis/'))
+  dir.create(file.path(base_dir, '/automatic_analysis/'), recursive=TRUE)
   temp <- temp <- strsplit(base_dir,"/")
   curr_datatypes <- tail(temp[[1]], n=1)
   write.csv(ST_automated,paste0(base_dir,'/automatic_analysis/',curr_datatypes,'.csv'), row.names = FALSE ,quote=FALSE)
@@ -400,10 +399,12 @@ calculate.ligand.receptor.pair.expression <- function(expr.mat, ligand.genes, re
 #'  
 #' @param expr.mat An expression matrix (with no assumed units), whose rows are genes (in no particular namespace) and whose columns are samples/cells/spots.
 #' @param quantiles A vector of probability values
+#' @summary.func Function to apply to rows of expression matrix to summarize each gene's expression
 #' @return A data.frame containing the estimated quantiles for each probability value in quantiles (one row, and as many columns as values in quantiles)
-calculate.expression.quantiles <- function(expr.mat, quantiles = seq(0, 1, by=0.1)) {
-  all.means <- rowMeans(expr.mat)
-  quantile(all.means, probs=quantiles)
+calculate.expression.quantiles <- function(expr.mat, quantiles = seq(0, 1, by=0.1), summary.func = mean) {
+  # gene.summaries <- rowMeans(expr.mat)
+  gene.summaries <- apply(expr.mat, 1, summary.func)
+  quantile(gene.summaries, probs=quantiles)
 }
 
 #' Add metadata to Seurat object.
@@ -420,6 +421,7 @@ add.metadata.to.seurat.obj <- function(obj, metadata.df) {
   # stopifnot(rows %in% rownames(metadata.df))
   # metadata.df <- metadata.df[rows,]
   colnames(metadata.df) <- make.names(colnames(metadata.df))
+  metadata.df <- metadata.df[, !(colnames(metadata.df) %in% colnames(obj[[]]))]
   cols.to.add <- colnames(metadata.df)
   all.meta <- merge(obj[[]], metadata.df, by = "row.names", all.x = TRUE)
   rownames(all.meta) <- all.meta$Row.names
@@ -523,4 +525,115 @@ get.annotationhub.biotypes <- function(gene_set){
   colnames(querried.biotypes) <- c("biotype", "Freq")
   o <- order(querried.biotypes$Freq, decreasing=TRUE)
   querried.biotypes <- querried.biotypes[o,]
+}
+
+#' Extract per-spot number/fraction of intronic, exonic, and intergenic (mapped) reads and number unmapped reads.
+#' 
+#' @param bam.file A string providing the path to an (indexed) bam file
+#' @return A data.frame in which each row corresponds to a spot.
+#'  It has rownames corresponding to the barcode of the spot and columns:
+#'  CThe sequence of the barcode associated to the spot.
+#'  E: The number of exonic reads in the spot
+#'  I: The number of intronic reads in the spot
+#'  N: The number of intergenic reads in the spot
+#'  tot.mapped.reads: The number of mapped reads in the spot
+#'  tot.unmapped.reads: The number of unmapped reads in the spot
+#'  total.reads: tot.mapped.reads + tot.unmapped.reas
+#'  E.frac.mapped: E / tot.mapped.reads
+#'  I.frac.mapped: I / tot.mapped.reads
+#'  N.frac.mapped: N / tot.mapped.reads
+get.per.spot.alignment.metrics <- function(bam.file) {
+  # Get the chromosome names
+  ret <- scanBamHeader(c(bam.file))
+  sq.indices <- names(ret[[1]]$text) == "@SQ"
+  seqnames <- as.vector(unlist(lapply(ret[[1]]$text[sq.indices], function(x) gsub(x[1], pattern="SN:", replacement=""))))
+  
+  # For computational/memory efficiency, iterate over the chromosomes as opposed
+  # to processing the entire file
+  names(seqnames) <- seqnames
+  res <- ldply(seqnames, .parallel = TRUE,
+               .fun = function(seqname) {
+                 # CB: error-corrected spot barcode
+                 # UB: error-corrected molecular barcode
+                 # RE: E = exonic, N = intronic, I = intergenic
+                 param <- ScanBamParam(tag=c('CB','RE'), which=GRanges(seqname, IRanges(1, 1e7)), flag=scanBamFlag(isUnmappedQuery=FALSE))
+                 x <- scanBam(bam.file, param=param)[[1]]
+                 if(is.null(x$tag$CB)) { return(NULL) }
+                 if(is.null(x$tag$RE)) { return(NULL) }
+                 df <- as.data.frame(x$tag)
+                 # Combine counts within spot (for this chromosome)
+                 ddply(df, .variables = c("CB"),
+                       .fun = function(df.cb) {
+                         if(nrow(df.cb) == 0) { return(NULL) }
+                         data.frame(E = length(which(!is.na(df.cb$RE) & (df.cb$RE == "E"))),
+                                    I = length(which(!is.na(df.cb$RE) & (df.cb$RE == "I"))),
+                                    N = length(which(!is.na(df.cb$RE) & (df.cb$RE == "N"))),
+                                    tot.mapped.reads = nrow(df.cb))
+                       })
+               })
+  
+  
+  # See description of _cell_ranger filtering here:
+  # https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/algorithms/overview
+  # I believe the bam we are reading already has duplicate UMIs filtered
+  param <- ScanBamParam(tag=c('CB'),flag=scanBamFlag(isUnmappedQuery=TRUE))
+  unmr <- scanBam(bam.file, param=param)[[1]]
+  unmr.tbl <- as.data.frame(table(na.omit(unmr$tag$CB)))
+  colnames(unmr.tbl) <- c("CB", "tot.unmapped.reads")
+  
+  # Combine results for a spot (CB) across chromosomes
+  spot.res <- ddply(res, .variables=c("CB"), .fun = function(df) data.frame(E = sum(df$E), I = sum(df$I), N = sum(df$N), tot.mapped.reads = sum(df$tot.mapped.reads)))
+  
+  spot.res <- merge(spot.res, unmr.tbl, all.x=TRUE)
+  #spot.res <- spot.res[!is.na(spot.res$CB),]
+  spot.res$total.reads <- spot.res$tot.mapped.reads + spot.res$tot.unmapped.reads
+  spot.res$E.frac.mapped <- spot.res$E / spot.res$tot.mapped.reads
+  spot.res$I.frac.mapped <- spot.res$I / spot.res$tot.mapped.reads
+  spot.res$N.frac.mapped <- spot.res$N / spot.res$tot.mapped.reads
+  # tmp <- merge(unfiltered.objs[[3]][[]], spot.res, by.x = c("row.names"), by.y = c("CB"))
+  # spot.res[!is.na(spot.res$CB),"CB"] <- "ambiguous.spot"
+  # rownames(spot.res) <- spot.res$CB
+  # spot.res[, !(colnames(spot.res) == "CB")]
+  spot.res
+}
+
+#' Extract per-spot number of UMIs, total number of reads, and saturation.
+#' 
+#' Number of UMIs should match nCount_Spatial in metadata.
+#' 
+#' Saturation = PCR duplication = # non-unique reads / tot # reads
+#' 
+#' @param mol.info.file A string providing the path to "molecule_info.h5" file
+#' @return A data.frame in which each row corresponds to a spot.
+#'  It has rownames corresponding to the barcode of the spot and columns:
+#'  CThe sequence of the barcode associated to the spot.
+#'  E: The number of exonic reads in the spot
+#'  I: The number of intronic reads in the spot
+#'  N: The number of intergenic reads in the spot
+#'  tot.mapped.reads: The number of mapped reads in the spot
+#'  tot.unmapped.reads: The number of unmapped reads in the spot
+#'  total.reads: tot.mapped.reads + tot.unmapped.reas
+#'  E.frac.mapped: E / tot.mapped.reads
+#'  I.frac.mapped: I / tot.mapped.reads
+#'  N.frac.mapped: N / tot.mapped.reads
+get.per.spot.saturation.stats <- function(mol.info.file) {
+  # Get the barcode and count of each UMI (ignoring the feature/gene)
+  df <- data.frame(barcode = h5read(mol.info.file, "/barcodes")[h5read(mol.info.file, "/barcode_idx")+1], 
+                   count = h5read(mol.info.file, "/count"))
+  # This is how you would extract the associated gene
+  # gene <- h5read(mol.info.file, "/features/name")[h5read(mol.info.file, "/feature_idx")+1]
+  # This should tell us whether the read mapped to an intron or exon, but I only see exonic reads
+  # umi.type <- h5read(mol.info.file, "/umi_type")
+  
+  res <- ddply(df, 
+               .variables = c("barcode"), 
+               .fun = function(tbl) {
+                 tot.reads <- sum(tbl$count)
+                 umis <- nrow(tbl)
+                 saturation <- (tot.reads - umis) / tot.reads
+                 data.frame(tot.reads = tot.reads, tot.umis = umis, saturation = saturation)
+                })
+  rownames(res) <- res$barcode
+  res <- res[, !(colnames(res) == "barcode")]
+  res
 }
