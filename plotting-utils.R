@@ -171,10 +171,12 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
   # for the following code, which suppresses 
   # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
   # g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0fk', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
+  g$scales$scales[[i]] <- NULL
   if(rescale.legend) {
-    i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
-    g$scales$scales[[i]] <- NULL
     g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  } else {
+    g <- g + scale_fill_gradientn(name = legend.name, colours = Seurat:::SpatialColors(n = 100))
   }
   g
 }
@@ -185,15 +187,18 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
 #'
 #' @param obj A Seurat object.
 #' @param features A vector of strings listing one or more features to plot.
+#' @param feature.names A vector of strings to use for the corresponding feature in the legend.
 #' @param include.hne Boolean indicating whether to include an H&E plot
 #' @param include.umi.cnts Boolean indicating whether to include a plot of UMI counts
 #' @param include.feature.cnts Boolean indicating whether to include a plot of feature / gene counts
 #' @return a ggplot
-plot.features <- function(obj, features, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, ...) {
+plot.features <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, ...) {
   plts <- NULL
   if(!is.null(features) && (length(features) > 0)) {
-    names(features) <- features
-    plts <- lapply(features, function(feature) plot.spatial(obj, features = c(feature), legend.name = feature, rescale.legend = FALSE))
+    if(is.null(feature.names)) { feature.names <- features }
+    indices <- 1:length(features)
+    names(indices) <- features
+    plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), legend.name = feature.names[i], rescale.legend = FALSE))
   }
   if(include.feature.cnts) {
     p <- plot.spatial(obj, "nFeature_Spatial", "# Features (K)", rescale.legend = TRUE)
@@ -305,17 +310,41 @@ plot.feature.across.samples <- function(objs, titles, feature = "nCount_Spatial"
   g.all
 }
 
-plot.gene.expression.distribution.relative.to.quantiles <- function(raw.cnt.mat, expr.mat, genes) {
-  # expr.mat <- cpm(raw.cnt.mat, log = TRUE)
+plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, add.housekeeping = TRUE) {
+  raw.cnt.mat <- GetAssayData(obj, assay = "Spatial", slot = "counts")
+  expr.mat <- cpm(raw.cnt.mat, log = TRUE)
   nz.genes <- rowSums(raw.cnt.mat) > 0
   raw.cnt.mat <- raw.cnt.mat[nz.genes, ]
   expr.mat <- expr.mat[nz.genes, ]
-
-  qs <- calculate.expression.quantiles(raw.cnt.mat)
   
+  # Add housekeeping genes
+  if(add.housekeeping) {
+    genes <- unique(c(genes, "ACTB", "GAPDH"))
+  }
+  
+  # qs <- calculate.expression.quantiles(raw.cnt.mat, summary.func = median)
+  qs <- calculate.expression.quantiles(expr.mat, summary.func = median)
 
+  # Calculate the quantiles and the genes closest to those quantiles
+  gene.summaries <- apply(expr.mat, 1, mean)
+  # Let's only plot those above the 50% percentile
+  qs <- quantile(gene.summaries, probs = seq(0.5, 1, by=0.1))
+  qs.names <- unlist(llply(qs, .fun = function(val) names(which.min((gene.summaries-val)^2))[1]))
+  qs.names <- as.data.frame(qs.names)
+  colnames(qs.names)[1] <- "gene"
+  qs.names$quantile <- rownames(qs.names)
+  qs.names$label <- paste0(qs.names$gene, " (", qs.names$quantile, ")")
+  
   mat <- raw.cnt.mat
   genes <- genes[genes %in% rownames(mat)]
+  genes <- names(sort(gene.summaries[genes]))
+  qs.names <- subset(qs.names, !(gene %in% genes))
+  labels <- genes
+  genes <- c(genes, qs.names$gene)
+  labels <- c(labels, qs.names$label)
+  names(labels) <- genes
+  
+  if(FALSE) {
   summarized.expr = apply(mat, 1, median)
   all.summarized.expr.df <- data.frame(gene = rownames(mat), expr = as.numeric(summarized.expr))
   all.summarized.expr.df <- all.summarized.expr.df[order(all.summarized.expr.df$expr, decreasing=TRUE),]
@@ -323,17 +352,29 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(raw.cnt.mat,
   g2 <- g2 + geom_density()
   
   gene.df <- reshape2::melt(as.matrix(expr.mat[genes, ]))
+  }
+  
   gene.df <- reshape2::melt(as.matrix(raw.cnt.mat[genes, ]))
   colnames(gene.df) <- c("gene", "sample", "expr")
-  g1 <- ggplot(data = gene.df, aes(x = expr, y = gene)) + geom_boxplot()
-
+  title <- paste0(obj[[]]$orig.ident[1], " (", ncol(mat), " spots)")
+  # g1 <- ggplot(data = gene.df, aes(x = expr, y = gene)) + geom_boxplot()
+  g1 <- ggplot(data = gene.df, aes(x = expr)) + geom_bar() + facet_wrap(~ gene, scale = "free", labeller = as_labeller(labels))
+  g1 <- g1 + ylab("Frequency") + xlab("Gene Read Count (Quantiles in Parentheses)")
+  g1 <- g1 + ggtitle(title)
+  g1
+  
 } 
 
 #' Plot the fraction of reads by biotype within each sample.
 #'  
 #' @param objs A named list of Seurat 10X spatial objects, each representing a sample.
 #' @return A ggplot
-plot.biotypes.across.samples <- function(objs) {
+plot.biotypes.across.samples <- function(objs, species = "human") {
+  if (species == 'human'){
+    gene_db = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+  } else {
+    gene_db = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+  }
   frac.df <-
     ldply(objs,
           .fun = function(obj) {
@@ -367,7 +408,7 @@ plot.biotypes.across.samples <- function(objs) {
   colnames(foo) <- c("sample", "biotype", "proportion")
   foo$proportion <- foo$proportion * 100
   foo$biotype <- factor(foo$biotype, biotype.cols)
-  g <- ggplot(data = foo, aes(x = biotype, y = proportion)) + geom_boxplot() + facet_wrap(~ sample, ncol=2)
+  g <- ggplot(data = foo, aes(x = biotype, y = proportion)) + geom_boxplot() + facet_wrap(~ sample, nrow=2)
   g <- g + theme(text = element_text(size = 20), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
   g <- g + xlab("Biotype") + ylab("Proportion")
   g
