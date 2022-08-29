@@ -320,37 +320,7 @@ all.unfiltered.meta$spot_type <- factor(all.unfiltered.meta$spot_type, levels = 
 
 
 ```{r}
-# FFPE
-dataset <- "EuE-31-236"
-# FFPE: 
-# on.off.reads = on + off; off > 0
-# on.off.reads = tot.umis
-# nCount_Spatial < tot.umis 
-# nCount_Spatail < on.off.reads; nCount_Spatial > on.reads
-# E is very, very low as is tot.mapped.reads ~ E
-# tot.unammped.reads > tot.mapped.reads
-# Frozen
-# dataset <- "EuE-31-165"
-# Frozen: nCount_Spatial = tot.umis = on.reads = on.off.reads ~ tot.mapped.reads ~ E
-mol.info.file <- paste0(spaceranger_dirs[[dataset]], "molecule_info.h5")
-gt <- get.targeted.genes(mol.info.file)
-obj <- unfiltered.objs[[dataset]]
-mat <- GetAssayData(obj, slot="counts")
-mat.off <- mat[!(rownames(mat) %in% gt$gene.targets),]
-mat.on <- mat[(rownames(mat) %in% gt$gene.targets),]
-df.off <- data.frame(spot = colnames(mat.off), off.reads = as.vector(colSums(mat.off)))
-df.on <- data.frame(spot = colnames(mat.on), on.reads = as.vector(colSums(mat.on)))
-df.on.off <- merge(df.on, df.off)
-df.on.off$on.off.reads <- df.on.off$on.reads + df.on.off$off.reads
-meta <- filtered.objs[[dataset]][[]]
-meta <- merge(meta, df.on.off, by.x = c("row.names"), by.y = c("spot"))
-plot(meta$E, meta$tot.umis)
-abline(a=0,b=1)
-```
-
-
-```{r}
-# g <- ggplot(data = all.meta, aes(x = spot_type, y = saturation)) + facet_wrap(orig.ident ~ label) + geom_violin()
+# Plot per-spot saturation rate.
 g <- ggplot(data = all.meta, aes(x = orig.ident, y = saturation, fill = label))  + geom_violin()
 g <- g + xlab("Sample") + ylab("Per-spot Saturation\n(PCR Duplication Rate)")
 if(is.null(dataset.secondary.labels)) {
@@ -424,6 +394,7 @@ png(paste0(plots_dir, "/", analysis_file_prefix, "frac-E-and-mapped.png"), width
 print(g)
 d <- dev.off()
 ```
+
 ```{r}
 # Plot saturation
 g.sat <- ggplot(data = all.meta, aes(x = orig.ident, y = saturation, fill = label))
