@@ -1,0 +1,1862 @@
+---
+title: "Cube FFPE vs FF pilot"
+output: html_notebook
+---
+
+```{r}
+# pacman is a "package manager" that defines the p_load function.
+# p_load automatically installs a library if it is not already installed.
+# This often, but doesn't always, works.
+suppressPackageStartupMessages(library(pacman)) 
+suppressPackageStartupMessages(library(Seurat))
+suppressPackageStartupMessages(p_load(hdf5r))
+suppressPackageStartupMessages(p_load(ggplot2))
+suppressPackageStartupMessages(p_load(patchwork))
+suppressPackageStartupMessages(p_load(dplyr))
+suppressPackageStartupMessages(p_load(plyr))
+suppressPackageStartupMessages(p_load(cowplot))
+# suppressPackageStartupMessages(p_load(scales))
+suppressPackageStartupMessages(p_load(reshape2))
+suppressPackageStartupMessages(p_load(ggbeeswarm))
+# suppressPackageStartupMessages(library(devtools))
+# install_github("jokergoo/ComplexHeatmap")
+suppressPackageStartupMessages(p_load(ComplexHeatmap))
+# devtools::install_github("sjmgarnier/viridisLite")
+suppressPackageStartupMessages(library(viridisLite))
+suppressPackageStartupMessages(library(dendextend))
+# suppressPackageStartupMessages(p_load(CCA))
+# suppressPackageStartupMessages(p_load("sRDA"))
+suppressPackageStartupMessages(p_load(PMA))
+suppressPackageStartupMessages(p_load(ggpubr))
+suppressPackageStartupMessages(p_load(rstatix))
+suppressPackageStartupMessages(p_load(gtools))
+suppressPackageStartupMessages(p_load(DropletUtils)) # for downsampling count matrices
+suppressPackageStartupMessages(p_load(foreach))
+suppressPackageStartupMessages(p_load(parallel))
+suppressPackageStartupMessages(p_load(scran)) # for deconvolution-based normalization
+suppressPackageStartupMessages(p_load(scuttle)) # for deconvolution-based normalization
+suppressPackageStartupMessages(p_load(rjson))
+##if (!require(devtools)) install.packages("devtools")
+##devtools::install_github("gaospecial/ggVennDiagram")
+suppressPackageStartupMessages(p_load(ggVennDiagram))
+suppressPackageStartupMessages(p_load(gridExtra))
+suppressPackageStartupMessages(p_load(biomaRt))
+suppressPackageStartupMessages(p_load(gplots))
+suppressPackageStartupMessages(p_load(RColorBrewer))
+suppressPackageStartupMessages(p_load(harmony))
+#devtools::install_github("dmcable/spacexr", build_vignettes = FALSE)
+suppressPackageStartupMessages(p_load(spacexr))
+suppressPackageStartupMessages(p_load(Matrix))
+suppressPackageStartupMessages(p_load(doParallel))
+suppressPackageStartupMessages(p_load(sf))
+suppressPackageStartupMessages(p_load(spdep))
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("RITAN")
+suppressPackageStartupMessages(p_load(RITAN))
+suppressPackageStartupMessages(p_load(RITANdata))
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("org.Hs.eg.db")
+suppressPackageStartupMessages(p_load(org.Hs.eg.db))
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("GOSemSim")
+suppressPackageStartupMessages(p_load(GOSemSim))
+#    install.packages("BiocManager")
+#BiocManager::install("clusterProfiler")
+suppressPackageStartupMessages(p_load(clusterProfiler))
+suppressPackageStartupMessages(p_load(data.table))
+suppressPackageStartupMessages(p_load(rhdf5))
+suppressPackageStartupMessages(p_load(devtools))
+suppressPackageStartupMessages(p_load(Rsamtools))
+suppressPackageStartupMessages(p_load(edgeR))
+suppressPackageStartupMessages(p_load(ggExtra))
+```
+
+Include util functions
+```{r}
+url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/r_hne_image_utils/main/hovernet-utils.R"
+source_url(url) # for extract.cell.info.from.hovernet.output, extract.hovernet.cell.info
+source("utils.R")
+source("plotting-utils.R")
+```
+
+Setup a parallel execution environment.
+
+```{r}
+num.cores <- setup.parallel.environment()
+```
+
+Configure variables that point to location of images and directories where analyses and plots will be stored.
+
+```{r}
+#dataset.labels <- list('SC2200108_DT-21-4142-BR6526' = 'FFPE', 'SC2200109_DT-21-4142-BR6526' = 'FFPE', 'SC2200110_DT-21-4141-BR7212' = 'FFPE', 'SC2200111_DT-21-4141-BR7212' = 'FFPE', 'SC2200104_BR6526' = 'Frozen')
+# long.dataset.names <- c('SC2200108_DT-21-4142-BR6526', 'SC2200109_DT-21-4142-BR6526', 'SC2200110_DT-21-4141-BR7212', 'SC2200111_DT-21-4141-BR7212', 'SC2200104_BR6526')
+# long.dataset.names <- c('SC2200104_BR6526')
+# long.dataset.names <- names(dataset.labels)
+
+dataset.secondary.labels <- NULL
+data_types <- c('pdac','endometrium','gbm','breastcancer','lungcancer','peritoneum', 'endometrium_and_peritoneum')
+#for (curr_datatypes in data_types){
+#}
+curr_datatypes=data_types[2]
+curr_datatypes='endometrium_and_peritoneum'
+if (curr_datatypes==data_types[1]){
+base_dir<-'/projects/compsci/USERS/somara/pdac/'
+biological.replicates <- c("BR6526", "BR7212")
+long.dataset.names <- list('BR6526-108' = 'SC2200108BR6526', 'BR6526-109' = 'SC2200109BR6526', 'BR7212-110' = 'SC2200110BR7212', 'BR7212-111' = 'SC2200111BR7212', 'BR6526-104' = 'SC2200104_BR6526')
+dataset.labels <- list('BR6526-108' = 'FFPE', 'BR6526-109' = 'FFPE', 'BR7212-110' = 'FFPE', 'BR7212-111' = 'FFPE', 'BR6526-104' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")
+} else if (curr_datatypes==data_types[2]){
+base_dir <- '/projects/compsci/jgeorge/USERS/somara/endometrium/'
+output_base_dir <- '/projects/compsci/jgeorge/whitebr/cancer-cube/endometrium/'
+dir.create(output_base_dir, recursive=TRUE)
+biological.replicates <- c("EuE-31")
+long.dataset.names <- list('EuE-31-236' = 'SC2200236_EuE-31', 'EuE-31-235' = 'SC2200235_EuE-31', 'EuE-31-165' = 'SC2200165_EuE-31', 'EuE-31-164' = 'SC2200164_EuE-31')
+dataset.labels <- list('EuE-31-164' = 'Frozen', 'EuE-31-165' = 'Frozen', 'EuE-31-235' = 'FFPE', 'EuE-31-236' = 'FFPE')
+species_sample <- replicate(length(dataset.labels), "Human")
+} else if (curr_datatypes==data_types[3]) {
+base_dir <- '/projects/compsci/USERS/somara/gbm/'
+biological.replicates <- c("UC-01","UC-02")
+long.dataset.names <- list('UC-02-242' = 'SC2200242_UC-02', 'UC-02-241' = 'SC2200241_UC-02', 'UC-01-240' = 'SC2200240_UC-01', 'UC-02-171' = 'SC2200171_UC-02', 'UC-02-170' = 'SC2200170_UC-02', 'UC-01-169' = 'SC2200169_UC-01', 'UC-01-168' = 'SC2200168_UC-01')
+dataset.labels <- list('UC-02-242' = 'FFPE', 'UC-02-241' = 'FFPE', 'UC-01-240' = 'FFPE', 'UC-02-171' = 'Frozen', 'UC-02-170' = 'Frozen','UC-01-169' = 'Frozen', 'UC-01-168' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Human")
+} else if (curr_datatypes==data_types[4]) {
+base_dir <- '/projects/compsci/USERS/somara/breast_cancer/'
+biological.replicates <- c("T1O")
+long.dataset.names <- list('T1O-244' = 'SC2200244_T1O', 'T1O-243' = 'SC2200243_T1O', 'T1O-199' = 'SC2200199_T1O', 'T1O-198' = 'SC2200198_T1O')
+dataset.labels <- list('T1O-244' = 'FFPE', 'T1O-243' = 'FFPE', 'T1O-199' = 'Frozen', 'T1O-198' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")  
+} else if (curr_datatypes==data_types[5]) {
+base_dir <- '/projects/compsci/USERS/somara/lung_cancer/'
+biological.replicates <- c("LM2O")
+long.dataset.names <- list('LM2O-246' = 'SC2200246_LM2O', 'LM2O-245' = 'SC2200245_LM2O', 'LM2O-201' = 'SC2200201_LM2O', 'LM2O-200' = 'SC2200200_LM2O')
+dataset.labels <- list('LM2O-246' ='FFPE', 'LM2O-245' ='FFPE', 'LM2O-201' = 'Frozen', 'LM2O-200' = 'Frozen')
+species_sample <- replicate(length(dataset.labels), "Mouse")  
+} else if (curr_datatypes==data_types[6]){
+base_dir <- '/projects/compsci/USERS/somara/peritoneum/'
+biological.replicates <- c('EcP-33')
+long.dataset.names <- list('EcP-33-238' = 'SC2200238_EcP-33', 'EcP-33-167' = 'SC2200167_EcP-33', 'EcP-33-166' = 'SC2200166_EcP-33')
+dataset.labels <- list('EcP-33-167' = 'Frozen', 'EcP-33-166' = 'Frozen', 'EcP-33-238' = 'FFPE')
+species_sample <- replicate(length(dataset.labels), "Human")
+} else if(curr_datatypes=='endometrium_and_peritoneum') {
+base_dir <- '/projects/compsci/jgeorge/whitebr/cancer-cube/data/endometrium_and_peritoneum/'
+output_base_dir <- '/projects/compsci/jgeorge/whitebr/cancer-cube/endometrium/'
+dir.create(output_base_dir, recursive=TRUE)
+biological.replicates <- c("EuE-31", "EcP-33")
+long.dataset.names <- list('EuE-31-236' = 'SC2200236_EuE-31', 'EuE-31-235' = 'SC2200235_EuE-31', 'EuE-31-165' = 'SC2200165_EuE-31', 'EuE-31-164' = 'SC2200164_EuE-31', 'EcP-33-238' = 'SC2200238_EcP-33', 'EcP-33-167' = 'SC2200167_EcP-33', 'EcP-33-166' = 'SC2200166_EcP-33')
+dataset.labels <- list('EuE-31-164' = 'Frozen', 'EuE-31-165' = 'Frozen', 'EuE-31-235' = 'FFPE', 'EuE-31-236' = 'FFPE', 'EcP-33-167' = 'Frozen', 'EcP-33-166' = 'Frozen', 'EcP-33-238' = 'FFPE')
+dataset.secondary.labels <- list('EuE-31-164' = 'EuE', 'EuE-31-165' = 'EuE', 'EuE-31-235' = 'EuE', 'EuE-31-236' = 'EuE', 'EcP-33-167' = 'EcP', 'EcP-33-166' = 'EcP', 'EcP-33-238' = 'EcP')
+species_sample <- replicate(length(dataset.labels), "Human")
+}
+
+# Write csv file for automatic ST pipeline 
+# write.automated.csv.file(base_dir, long.dataset.names, species_sample)
+
+
+dataset.metadata.df <- data.frame(sample.name = names(dataset.labels), type = unlist(unname(dataset.labels)))
+datasets <- names(long.dataset.names)
+names(datasets) <- datasets
+```
+
+```{r}
+datasets <- datasets[order(dataset.metadata.df$sample.name, dataset.metadata.df$type)]
+dataset.labels <- dataset.labels[datasets]
+long.dataset.names <- long.dataset.names[datasets]
+
+ffpe.datasets <- datasets[dataset.labels == "FFPE"]
+frozen.datasets <- datasets[dataset.labels == "Frozen"]
+color_list<-list('FFPE'="#d8b365" , 'Frozen'='#5ab4ac')
+
+
+# Directory holding the raw data
+spaceranger_dirs <- paste0(base_dir, long.dataset.names, "/spaceranger/")
+names(spaceranger_dirs) <- datasets
+
+# Define and create output results and plots directories
+# base_dir_antonis<-'/projects/compsci/USERS/somara/cancer-cude/qc-pilot/'
+analysis_dir <- paste0(output_base_dir, '/analysis/')
+dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
+plots_dir <- paste0(output_base_dir, '/plots/')
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Prefix for all output files (results and plots)
+analysis_file_prefix <- paste0(curr_datatypes,"-pilot-")
+```
+
+
+```{r}
+# Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
+filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
+unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
+```
+
+```{r}
+# Add normalized (non-log) Counts Per Million (CPM) data to the filtered objects
+filtered.objs <-
+  llply(filtered.objs,
+        .fun = function(obj) {
+          cpm.mat <- cpm(GetAssayData(obj, slot="counts", assay="Spatial"), log = FALSE)
+          obj[["cpm"]] <- CreateAssayObject(counts = cpm.mat)
+          obj
+        })
+```
+
+
+```{r}
+# Plot the biotypes (e.g., protein coding, ribosomal, mitochondrial, etc) across samples
+g <- plot.biotypes.across.samples(filtered.objs, sample.labels = dataset.labels)
+png(paste0(plots_dir,curr_datatypes, "-read-proportion-biotype-vs-sample.png"),height=1*480, width=2*480)
+print(g)
+d <- dev.off()
+```
+
+```{r}
+# Compute sequencing alignment metrics for all samples.
+# This includes things like number and fraction of mapped reads, unmapped reads,
+# exonic, intronic, and intergenic reads. It is slow because it parses the BAM file.
+# As such, save the results and don't recompute them if they exist.
+nms <- names(unfiltered.objs)
+names(nms) <- nms
+align.metrics <-
+  llply(nms, .parallel = FALSE,
+        .fun = function(nm) {
+          print(nm)
+          alignment.metric.file <- paste0(analysis_dir, "/", nm, "-alignment-metrics.csv")
+          if(!file.exists(alignment.metric.file)) { 
+            bam.file <- paste0(spaceranger_dirs[[nm]], "/possorted_genome_bam.bam")
+            df <- get.per.spot.alignment.metrics(bam.file)
+            write.table(file=alignment.metric.file, df, row.names=FALSE, col.names=TRUE, sep=",", quote=FALSE)
+          }
+          as.data.frame(fread(alignment.metric.file))
+        })
+```
+
+```{r}
+# Compute per-spot saturation metrics.
+# This isn't quick, but isn't nearly as slow as calculating the alignment metrics.
+nms <- names(unfiltered.objs)
+names(nms) <- nms
+filtered.saturation.metrics <-
+  llply(nms,
+        .fun = function(nm) {
+          print(nm)
+          mol.info.file <- paste0(spaceranger_dirs[[nm]], "molecule_info.h5")
+          get.per.spot.saturation.stats(mol.info.file, filter = TRUE)
+        })
+
+unfiltered.saturation.metrics <-
+  llply(nms,
+        .fun = function(nm) {
+          print(nm)
+          mol.info.file <- paste0(spaceranger_dirs[[nm]], "molecule_info.h5")
+          get.per.spot.saturation.stats(mol.info.file, filter = FALSE)
+        })
+
+```
+
+```{r}
+# Add saturation and alignment metrics to unfiltered and filtered Seurat objects
+nms <- names(unfiltered.objs)
+names(nms) <- nms
+for(nm in nms) {
+  align.meta <- align.metrics[[nm]]
+  # Spot barcode is in CB column. Make that the row name and remove CB.
+  align.meta <- align.meta[!is.na(align.meta$CB),]
+  rownames(align.meta) <- align.meta$CB
+  align.meta <- align.meta[, !(colnames(align.meta) == "CB")]
+  
+  seq.meta <- filtered.saturation.metrics[[nm]]
+  # Add "-1" postfix to barcode
+  rownames(seq.meta) <- paste0(rownames(seq.meta), "-1")
+  m <- merge(align.meta, seq.meta, by = "row.names", all = TRUE)
+  m[is.na(m)] <- 0
+  rownames(m) <- m$Row.names
+  m <- m[, !(colnames(m) == "Row.names")]
+  m$map.frac <- m$tot.mapped.reads / m$tot.reads
+  filtered.objs[[nm]] <- add.metadata.to.seurat.obj(filtered.objs[[nm]], m)
+  
+  seq.meta <- unfiltered.saturation.metrics[[nm]]
+  # Add "-1" postfix to barcode
+  rownames(seq.meta) <- paste0(rownames(seq.meta), "-1")
+  m <- merge(align.meta, seq.meta, by = "row.names", all = TRUE)
+  m[is.na(m)] <- 0
+  rownames(m) <- m$Row.names
+  m <- m[, !(colnames(m) == "Row.names")]
+  m$map.frac <- m$tot.mapped.reads / m$tot.reads
+  unfiltered.objs[[nm]] <- add.metadata.to.seurat.obj(unfiltered.objs[[nm]], m)
+}
+```
+
+```{r}
+# If this is a "secondary label" [e.g., endometrium (EuE) vs peritoneum (Ecp) for the combined
+# endometrium / peritoneum dataset], add it to the metadata
+all.meta <- ldply(filtered.objs, .fun = function(obj) obj[[]])
+sample.df <- data.frame(sample = names(dataset.labels), label = as.character(dataset.labels))
+all.meta <- merge(all.meta, sample.df, by.x = c("orig.ident"), by.y = c("sample"))
+if(!is.null(dataset.secondary.labels)) {
+  sec.df <- data.frame(sample = names(dataset.secondary.labels), sec.label = as.character(dataset.secondary.labels))
+  all.meta <- merge(all.meta, sec.df, by.x = c("orig.ident"), by.y = c("sample"))
+}
+all.meta$orig.ident <- factor(all.meta$orig.ident)
+```
+
+```{r}
+all.unfiltered.meta <- ldply(unfiltered.objs, .fun = function(obj) obj[[]])
+sample.df <- data.frame(sample = names(dataset.labels), label = as.character(dataset.labels))
+all.unfiltered.meta <- merge(all.unfiltered.meta, sample.df, by.x = c("orig.ident"), by.y = c("sample"))
+if(!is.null(dataset.secondary.labels)) {
+  sec.df <- data.frame(sample = names(dataset.secondary.labels), sec.label = as.character(dataset.secondary.labels))
+  all.unfiltered.meta <- merge(all.unfiltered.meta, sec.df, by.x = c("orig.ident"), by.y = c("sample"))
+}
+all.unfiltered.meta$orig.ident <- factor(all.unfiltered.meta$orig.ident)
+all.unfiltered.meta$spot_type <- factor(all.unfiltered.meta$spot_type, levels = c("tissue", "background"))
+```
+
+```{r}
+# Beyond this point, things get a little "junky" and endometrium specific.
+```
+
+
+```{r}
+# FFPE
+dataset <- "EuE-31-236"
+# FFPE: 
+# on.off.reads = on + off; off > 0
+# on.off.reads = tot.umis
+# nCount_Spatial < tot.umis 
+# nCount_Spatail < on.off.reads; nCount_Spatial > on.reads
+# E is very, very low as is tot.mapped.reads ~ E
+# tot.unammped.reads > tot.mapped.reads
+# Frozen
+# dataset <- "EuE-31-165"
+# Frozen: nCount_Spatial = tot.umis = on.reads = on.off.reads ~ tot.mapped.reads ~ E
+mol.info.file <- paste0(spaceranger_dirs[[dataset]], "molecule_info.h5")
+gt <- get.targeted.genes(mol.info.file)
+obj <- unfiltered.objs[[dataset]]
+mat <- GetAssayData(obj, slot="counts")
+mat.off <- mat[!(rownames(mat) %in% gt$gene.targets),]
+mat.on <- mat[(rownames(mat) %in% gt$gene.targets),]
+df.off <- data.frame(spot = colnames(mat.off), off.reads = as.vector(colSums(mat.off)))
+df.on <- data.frame(spot = colnames(mat.on), on.reads = as.vector(colSums(mat.on)))
+df.on.off <- merge(df.on, df.off)
+df.on.off$on.off.reads <- df.on.off$on.reads + df.on.off$off.reads
+meta <- filtered.objs[[dataset]][[]]
+meta <- merge(meta, df.on.off, by.x = c("row.names"), by.y = c("spot"))
+plot(meta$E, meta$tot.umis)
+abline(a=0,b=1)
+```
+
+
+```{r}
+# g <- ggplot(data = all.meta, aes(x = spot_type, y = saturation)) + facet_wrap(orig.ident ~ label) + geom_violin()
+g <- ggplot(data = all.meta, aes(x = orig.ident, y = saturation, fill = label))  + geom_violin()
+g <- g + xlab("Sample") + ylab("Per-spot Saturation\n(PCR Duplication Rate)")
+if(is.null(dataset.secondary.labels)) {
+  foo <- reshape2::melt(all.meta[, c("orig.ident", "label", "num.nonzero.genes", "num.umis")], id.vars=c("orig.ident","label"))
+  g <- ggplot(data = foo, aes(x=orig.ident,y=value,fill=label)) + facet_wrap( ~ variable, scales="free") + geom_violin() + scale_y_continuous(trans="log2") + xlab("") + ylab("Count") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + labs(fill="")
+} else {
+  foo <- reshape2::melt(all.meta[, c("orig.ident", "label", "sec.label", "num.nonzero.genes", "num.umis")], id.vars=c("orig.ident","label", "sec.label"))
+  g <- ggplot(data = foo, aes(x=orig.ident,y=value,fill=label)) + facet_wrap(sec.label ~ variable, scales="free") + geom_violin() + scale_y_continuous(trans="log2") + xlab("") + ylab("Count") + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + labs(fill="")
+}
+```
+
+```{r}
+# Plot Number of UMIs and Number of Genes as a function of tissue vs background and FFPE vs Frozen
+g.umi <- ggplot(data = all.unfiltered.meta, aes(x = orig.ident, y = num.umis, fill = label, linetype = spot_type))
+if(!is.null(dataset.secondary.labels)) {
+  g.umi <- g.umi + facet_wrap(~ sec.label, scales="free")
+}
+g.umi <- g.umi + geom_violin() + scale_y_continuous(trans="log2")
+g.umi <- g.umi + labs(fill="Protocol") + labs(linetype="Spot") + ylab("Number of UMIs") + xlab("")
+g.umi <- g.umi + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+# g.umi <- g.umi + theme(legend.position = "top", legend.box = "vertical", text = element_text(size = 15))
+g.umi <- g.umi + theme(legend.position = "top", text = element_text(size = 15))
+
+g.genes <- ggplot(data = all.unfiltered.meta, aes(x = orig.ident, y = num.nonzero.genes, fill = label, linetype = spot_type))
+if(!is.null(dataset.secondary.labels)) {
+  g.genes <- g.genes + facet_wrap(~ sec.label, scales="free")
+}
+g.genes <- g.genes + geom_violin()  + scale_y_continuous(trans="log2")
+g.genes <- g.genes + labs(fill="Protocol") + labs(linetype="Spot") + ylab("Number of Genes\n(with counts > 0)") + xlab("")
+g.genes <- g.genes + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g.genes <- g.genes + theme(legend.position = "top", text = element_text(size = 15))
+
+g.legend <- get_legend(g.umi)
+g.umi <- g.umi + theme(legend.position = "none")
+g.genes <- g.genes + theme(legend.position = "none")
+
+g <- plot_grid(plotlist=list(g.umi, g.genes), ncol=2, labels = "AUTO")
+g <- plot_grid(g, g.legend, nrow = 2, rel_heights = c(5, 1))
+png(paste0(plots_dir, "/", analysis_file_prefix, "num-umis-and-genes.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+```
+
+```{r}
+# Plot Frac of reads that are mapped and fraction of reads that are exons
+g.E <- ggplot(data = all.meta, aes(x = orig.ident, y = E.frac.mapped, fill = label))
+if(!is.null(dataset.secondary.labels)) {
+  g.E <- g.E + facet_wrap(label ~ sec.label, scales="free")
+}
+g.E <- g.E + geom_violin()
+g.E <- g.E + labs(fill="Protocol") + ylab("Exonic Fraction of Mapped Reads") + xlab("")
+g.E <- g.E + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g.E <- g.E + theme(legend.position = "top", text = element_text(size = 15))
+
+g.map <- ggplot(data = all.meta, aes(x = orig.ident, y = map.frac, fill = label))
+if(!is.null(dataset.secondary.labels)) {
+  g.map <- g.map + facet_wrap( ~ sec.label, scales="free")
+}
+g.map <- g.map + geom_violin()
+g.map <- g.map + labs(fill="Protocol") + ylab("Mapped Fraction of Total Reads") + xlab("")
+g.map <- g.map + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g.map <- g.map + theme(legend.position = "top", text = element_text(size = 15))
+
+g.legend <- get_legend(g.E)
+g.E <- g.E + theme(legend.position = "none")
+g.map <- g.map + theme(legend.position = "none")
+
+g <- plot_grid(plotlist=list(g.map, g.E), ncol=2, labels = "AUTO")
+g <- plot_grid(g, g.legend, nrow = 2, rel_heights = c(5, 1))
+png(paste0(plots_dir, "/", analysis_file_prefix, "frac-E-and-mapped.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+```
+```{r}
+# Plot saturation
+g.sat <- ggplot(data = all.meta, aes(x = orig.ident, y = saturation, fill = label))
+if(!is.null(dataset.secondary.labels)) {
+  g.sat <- g.sat + facet_wrap(~ sec.label, scales="free")
+} else {
+  g.sat <- g.sat + facet_wrap(~ label, scales="free")
+}
+
+g.sat <- g.sat + geom_violin()
+g.sat <- g.sat + labs(fill="Protocol") + ylab("Saturation Rate\n(Non-unique Reads / Total Reads)") + xlab("")
+g.sat <- g.sat + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g.sat <- g.sat + theme(legend.position = "bottom", text = element_text(size = 15))
+png(paste0(plots_dir, "/", analysis_file_prefix, "saturation.png"), width = 1 * 480)
+print(g.sat)
+d <- dev.off()
+```
+
+
+```{r}
+# Create a reference for RCTD deconvolution
+# Read in the single-cell data.
+counts_sc_full <- fread(paste0("/projects/compsci/jgeorge/USERS/somara/endometrium/","endo-2022_global.csv"))
+counts_sc <- counts_sc_full
+foo <- as.data.frame(counts_sc)
+rownames(foo) <- foo$index
+counts_sc <- t(foo[,-1])
+  
+# Note: using "main" cell types. These are a coarse set of cell types.
+cell_types_main <- read.csv(paste0("/projects/compsci/jgeorge/USERS/somara/endometrium/","endo-2022_global_celltype_main.csv"))
+cell_types_main <- setNames(cell_types_main[[2]], cell_types_main[[1]])
+cell_types_main <- as.factor(cell_types_main) # convert to factor data type
+  
+cell_types_full <- fread(paste0("/projects/compsci/jgeorge/USERS/somara/endometrium/","endo-2022_global_celltype.csv"))
+cell_types_full <- setNames(cell_types_full[[2]], cell_types_full[[1]])
+cell_types_full <- as.factor(cell_types_full) # convert to factor data type
+```
+
+
+
+```{r}
+# Run RCTD spot deconvolution -- first using the "main" (coarse-grained) endometrium cell types
+main.rctds <- 
+  llply(datasets, .parallel = FALSE,
+        .fun = function(dataset) {
+          print(dataset)
+          rds.file <- paste0(analysis_dir, "/", dataset, "-rctd-main.rds")
+          if(!file.exists(rds.file)) {
+            obj <- filtered.objs[[dataset]]
+            mol.info.file <- paste0(spaceranger_dirs[[dataset]], "molecule_info.h5")
+            # Get the genes that are included in the ST spot data for this sample.
+            gt <- get.targeted.genes(mol.info.file)
+            st.counts <- GetAssayData(obj, assay="Spatial", slot="counts")
+            st.counts <- st.counts[rownames(st.counts) %in% gt$gene.targets,]
+            st.coords <- obj[[]][, c("col", "row")]
+            colnames(st.coords) <- c("x","y")
+            nUMI <- colSums(st.counts) # In this case, total counts per pixel is nUMI
+            puck <- SpatialRNA(st.coords, st.counts, nUMI)
+            
+            # Create a reference for _each_ sample. Why? Because the Reference is
+            # dependent on a single-cell RNA-seq reference (sc_mat) and we want
+            # to ensure that those genes are in the spots. If they weren't, we
+            # may have genes selected as markers that aren't actually in the ST
+            # data. This concern has not actually been confirmed by examining the code,
+            # which may handle this case.
+            sc_mat <- counts_sc[rownames(counts_sc) %in% gt$gene.targets,]
+            cell_types <- cell_types_main[colnames(sc_mat)]
+            nUMI <- colSums(sc_mat)
+            reference <- Reference(sc_mat, cell_types, nUMI, n_max_cells = ncol(sc_mat) + 1)
+
+            max_cores <- min(10, num.cores - 1)
+            # Note that we have keep_reference = TRUE here. Without it, the default is
+            # keep_reference = FALSE, which would ignore the Reference we have 
+            # intentionally created above.
+            myRCTD <- create.RCTD(puck, reference, max_cores = max_cores, keep_reference = TRUE)
+            myRCTD <- suppressPackageStartupMessages(run.RCTD(myRCTD, doublet_mode = 'full'))
+            saveRDS(myRCTD, rds.file)
+          }
+          cat(paste0("Reading ", rds.file, "\n"))
+          myRCTD <- readRDS(rds.file)
+          gc()
+          myRCTD
+        })
+
+# Run deconvolution again, this time using the "full" (fine-grained) cell types.
+full.rctds <- 
+  llply(datasets, .parallel = FALSE,
+        .fun = function(dataset) {
+          print(dataset)
+          rds.file <- paste0(analysis_dir, "/", dataset, "-rctd-full.rds")
+          if(!file.exists(rds.file)) {
+            obj <- filtered.objs[[dataset]]
+            mol.info.file <- paste0(spaceranger_dirs[[dataset]], "molecule_info.h5")
+            gt <- get.targeted.genes(mol.info.file)
+            st.counts <- GetAssayData(obj, assay="Spatial", slot="counts")
+            st.counts <- st.counts[rownames(st.counts) %in% gt$gene.targets,]
+            st.coords <- obj[[]][, c("col", "row")]
+            colnames(st.coords) <- c("x","y")
+            nUMI <- colSums(st.counts) # In this case, total counts per pixel is nUMI
+            puck <- SpatialRNA(st.coords, st.counts, nUMI)
+            # Using "main" cell types here
+            sc_mat <- counts_sc[rownames(counts_sc) %in% gt$gene.targets,]
+            cell_types <- cell_types_full[colnames(sc_mat)]
+            nUMI <- colSums(sc_mat)
+            reference <- Reference(sc_mat, cell_types, nUMI, n_max_cells = ncol(sc_mat) + 1)
+
+            max_cores <- min(10, num.cores - 1)
+            myRCTD <- create.RCTD(puck, reference, max_cores = max_cores, keep_reference = TRUE)
+            myRCTD <- suppressPackageStartupMessages(run.RCTD(myRCTD, doublet_mode = 'full'))
+            saveRDS(myRCTD, rds.file)
+          }
+          cat(paste0("Reading ", rds.file, "\n"))
+          myRCTD <- readRDS(rds.file)
+          gc()
+          myRCTD
+        })
+
+```
+
+```{r}
+# Add both the main and full RCTD results as metadata to the Seurat objects.
+# Main results have a prefix "main." and ful results have a prefix "full."
+filtered.objs <-
+  llply(datasets, .parallel = FALSE,
+        .fun = function(nm) {
+          print(nm)
+          md.df <- format.rctd.output_(main.rctds[[nm]], normalize = FALSE)
+          md.df <- md.df[, !(colnames(md.df) %in% c("x","y"))]
+          colnames(md.df) <- paste0("main.", colnames(md.df))
+          obj <- add.metadata.to.seurat.obj(filtered.objs[[nm]], md.df)
+          md.df <- format.rctd.output_(full.rctds[[nm]], normalize = FALSE)
+          md.df <- md.df[, !(colnames(md.df) %in% c("x","y"))]
+          colnames(md.df) <- paste0("full.", colnames(md.df))
+          obj <- add.metadata.to.seurat.obj(obj, md.df)
+          obj
+        })
+```
+
+```{r}
+stop("Below here is very endometrium specific\nAnd plots genes of interest in endometrium.")
+```
+
+
+```{r}
+# Here are some marker genes for stroma, epithelial, etc.
+angio.genes <- c("ANGPT1", "ANGPTL1", "ANGPT2", "SNCG", "FGF7", "CCL21")
+epithelial.markers <- c("EPCAM", "CDH1")
+stromal.markers <- c("COL1A1", "PDGRFA", "CD10")
+# CD31 = PECAM1
+endothelial.markers <- c("VWF", "PECAM1")
+myeloid.markers <- c("PTPRC", "CD68", "CD14")
+lymphocyte.markers <- c("PTPRC", "CD2", "CD3G", "CD20", "CD56")
+fibroblast.markers <- c("MME")
+cycling.genes <- c("TOP2A", "MKI67")
+all.cell.type.markers <- unique(c(epithelial.markers, stromal.markers, endothelial.markers, myeloid.markers, lymphocyte.markers, fibroblast.markers))
+ligand.receptor.genes <- c("TIE1", "TEK", "CCND1", "BTG2", "DLL4", "NOTCH1", "NOTCH4", "PECAM1", "JAM2", "VCAM1", "ICAM1", "CD99", "CXCL12", "PLVAP", "AQP1", "ICAM2")
+all.genes <- unique(c(all.cell.type.markers, cycling.genes, ligand.receptor.genes))
+# g <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[[1]], all.cell.type.markers)
+
+tls.genes <- c("MS4A1", "CD19", "CD3E", "CD3G", "PDPN", "HLA-DRA")
+tls.names <- c("CD20", "CD19", "CD3E", "CD3G", "PDPN", "HLA-DRA")
+for(dataset in datasets) {
+  obj <- filtered.objs[[dataset]]
+  mat <- GetAssayData(obj, slot="counts")
+  flag.b.cell <- (mat["MS4A1",] > 0) | (mat["CD19",] > 0)
+  flag.t.cell <- (mat["CD3E",] > 0) | (mat["CD3G",] > 0)
+  flag.follicular.dc <- (mat["PDPN",] > 0)
+  flag.apc <- (mat["HLA-DRA",] > 0)
+  flag <- flag.b.cell & flag.t.cell & flag.follicular.dc & flag.apc
+  df <- data.frame(TLS = flag)
+  rownames(df) <- colnames(mat)
+  obj <- add.metadata.to.seurat.obj(obj, df)
+  g <- SpatialDimPlot(obj, group.by = c("TLS"), cols=cbbPalette[1:2]) + theme(legend.text = element_text(size=20), legend.title = element_text(size = 20)) + guides(fill = guide_legend(override.aes = list(size = 5)))
+  png(paste0(plots_dir, "/", analysis_file_prefix, "tls-map-", dataset, ".png"), width = 1 * 480, height = 1 * 480)
+  print(g)
+  d <- dev.off()
+  cat(paste0(dataset, ": ", length(which(flag)), "\n"))
+}
+
+for(dataset in datasets) {
+  obj <- filtered.objs[[dataset]]
+  mat <- GetAssayData(obj, slot="counts")
+  flag.mac <- (mat["CD86",] > 0) 
+  flag.treg <- (mat["CTLA4",] > 0) 
+  # flag.treg <- flag.treg | (mat["FOXP3",] > 0)
+  flag <- flag.mac & flag.treg
+  df <- data.frame(CTLA4 = flag)
+  rownames(df) <- colnames(mat)
+  obj <- add.metadata.to.seurat.obj(obj, df)
+  g <- SpatialDimPlot(obj, group.by = c("CTLA4"), cols=cbbPalette[1:2]) + theme(legend.text = element_text(size=20), legend.title = element_text(size = 20)) + guides(fill = guide_legend(override.aes = list(size = 5)))
+  png(paste0(plots_dir, "/", analysis_file_prefix, "mac-ctla4-map-", dataset, ".png"), width = 1 * 480, height = 1 * 480)
+  print(g)
+  d <- dev.off()
+  cat(paste0(dataset, " mac+treg: ", length(which(flag)), " mac: ", length(which(flag.mac)), " treg: ", length(which(flag.treg)), "\n"))
+}
+
+g1 <- plot.features(filtered.objs[["EuE-31-235"]], features = tls.genes, feature.names = tls.names)
+g1 <- add.title.to.plot(g1, "EuE-31-235")
+
+g2 <- plot.features(filtered.objs[["EuE-31-236"]], features = tls.genes, feature.names = tls.names)
+g2 <- add.title.to.plot(g2, "EuE-31-236")
+
+g <- plot_grid(g1, g2, labels="AUTO", ncol=2)
+png(paste0(plots_dir, "/", analysis_file_prefix, "tls.png"), width = 4 * 480, height = 1 * 480)
+print(g)
+d <- dev.off()
+
+obj <- filtered.objs[["EuE-31-235"]]
+
+
+g1 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EuE-31-235"]], tls.genes, probs = c(0.6, 0.7,0.8, 0.9, 1.0))
+g1 <- g1 + theme(text = element_text(size = 30), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g2 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EuE-31-236"]], tls.genes, probs = c(0.6, 0.7,0.8, 0.9, 1.0))
+
+png(paste0(plots_dir, "/", analysis_file_prefix, "EuE-31-235-tls-marker-distributions.png"), width = 2 * 480, height = 2 * 480)
+print(g1)
+d <- dev.off()
+
+
+g1 <- plot.features(filtered.objs[["EcP-33-167"]], features = c("CD86", "CTLA4"))
+g1 <- add.title.to.plot(g1, "EcP-33-167")
+# g2 <- plot.features(filtered.objs[["EcP-33-166"]], features = c("CD86", "CTLA4"))
+g2 <- plot.features(filtered.objs[["EuE-31-236"]], features = c("CD86", "CTLA4"))
+g2 <- add.title.to.plot(g2, "EuE-31-236")
+g <- plot_grid(g1, g2, labels="AUTO", ncol=2)
+png(paste0(plots_dir, "/", analysis_file_prefix, "cd86-ctla4.png"), width = 2 * 480, height = 1 * 480)
+print(g)
+d <- dev.off()
+
+
+g1 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EcP-33-167"]], c("CD86", "CTLA4"), probs = c(0.6, 0.7, 0.8, 0.9, 1.0))
+g1 <- g1 + theme(text = element_text(size = 30), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+g2 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EuE-31-236"]], c("CD86", "CTLA4"), probs = c(0.6, 0.7, 0.8, 0.9, 1.0))
+g2 <- g2 + theme(text = element_text(size = 30), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+
+g <- plot_grid(g1, g2, labels="AUTO", ncol=2)
+png(paste0(plots_dir, "/", analysis_file_prefix, "cd86-ctla4-dist.png"), width = 4 * 480, height = 2 * 480)
+print(g)
+d <- dev.off()
+# plot.features(filtered.objs[["EuE-31-235"]], features = tls.genes)
+plot.features(filtered.objs[["EuE-31-236"]], features = tls.genes)
+
+indices <- 1:length(datasets)
+names(indices) <- names(datasets) 
+gs <- llply(indices,
+            .fun = function(indx) {
+              g <- plot.features(filtered.objs[[indx]], features = c("CD68", "PECAM1","EPCAM",   "main.myeloid", "main.endothelial", "main.epithelial"), feature.names = c("CD68", "PECAM1", "EPCAM", "myeloid", "endo", "epi"), include.hne=FALSE)
+              g <- add.title.to.plot(g, ggtitle(paste0(names(dataset.labels)[indx], " (", dataset.labels[[indx]], ")")))
+              g
+              })
+
+g <- plot_grid(gs[["EcP-33-167"]], gs[["EuE-31-165"]],  labels="AUTO", ncol=2)
+png(paste0(plots_dir, "/", analysis_file_prefix, "pop-markers-in-EuE-and-EcP.png"), width = 4 * 480, height = 1 * 480)
+print(g)
+d <- dev.off()
+
+g1 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EcP-33-167"]], c("CD68", "COL1A1", "EPCAM", "PECAM1"), probs = c(0.8, 0.9, 1), nrow=2)
+g1 <- g1 + theme(text = element_text(size = 30), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g2 <- plot.gene.expression.distribution.relative.to.quantiles(filtered.objs[["EuE-31-165"]], c("CD68", "COL1A1", "EPCAM", "PECAM1"), probs = c(0.8, 0.9, 1), nrow=2)
+g2 <- g2 + theme(text = element_text(size = 30), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+png(paste0(plots_dir, "/", analysis_file_prefix, "pop-marker-distributions.png"), width = 4 * 480, height = 2 * 480)
+g <- plot_grid(g1, g2, labels="AUTO", ncol=2)
+print(g)
+d <- dev.off()
+
+df_RCTD <- ldply(datasets, .fun = function(dataset) { format.rctd.output_(main.rctds[[dataset]]) })
+sample.df <- data.frame(sample = names(dataset.labels), label = as.character(dataset.labels))
+df_RCTD <- merge(df_RCTD, sample.df, by.x = c(".id"), by.y = c("sample"))
+g <- plot.population.fractions.across.samples(df_RCTD, id.cols = c(".id", "label"), sample.col = c(".id"), fill = "label") + labs(fill="Protocol") + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", analysis_file_prefix, "main-pop-marker-distribution.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+
+png(paste0(plots_dir, "/", analysis_file_prefix, "EuE-31-235-pop-markers.png"), width = 2 * 480, height = 1 * 480)
+print(gs[["EuE-31-235"]])
+d <- dev.off()
+
+# plot.features(filtered.objs[[1]], features = c("EPCAM", "COL1A1", "PECAM1", "main.epithelial", "main.stromal", "main.endothelial"), feature.names = c("EPCAM", "COL1A1", "PECAM1", "epi", "stromal", "endo"), include.hne=FALSE)
+# plot.features(filtered.objs[[6]], features = c("EPCAM", "COL1A1", "PECAM1", "main.epithelial", "main.stromal", "main.endothelial"), feature.names = c("EPCAM", "COL1A1", "PECAM1", "epi", "stromal", "endo"), include.hne=FALSE)
+ #plot.features(filtered.objs[[6]], features = angio.genes)
+ #plot.features(filtered.objs[[1]], features = angio.genes)
+ 
+
+
+plot.features(filtered.objs[[3]], features = c("epithelial", "EPCAM", "CDH1", "KRT18", "KRT8"), include.hne=TRUE)
+plot.features(filtered.objs[[4]], features = c("stromal", "THY1", "COL1A1",  "OGN", "AIFM2", "POSTN", "IGFBP1", "PRL", "MME"), include.hne=TRUE)
+plot.features(filtered.objs[[4]], features = c("stromal", "COL1A1",  "MME"), include.hne=TRUE)
+# plot.features(obj, features=c("total", "HBA2"))
+# plot.features(filtered.objs[[1]], features = c("COL1A1",  "MME", "TOP2A", "MKI67", "nCount_Spatial"), include.hne=TRUE)
+plot.features(filtered.objs[[3]], features = c("COL1A1",  "MKI67", "OGN", "nCount_Spatial"), include.hne=TRUE)
+```
+
+```{r}
+# HERE
+dataset <- "EcP-33-167"
+g1 <- plot.features(unfiltered.objs[[dataset]], features =  NULL, include.hne=TRUE, include.umi.cnts=TRUE, include.feature.cnts=TRUE, nrow=1)
+g1 <- add.title.to.plot(g1, ggtitle(paste0(dataset, " (", dataset.labels[[dataset]], ")")))
+
+dataset <- "EuE-31-235"
+g2 <- plot.features(unfiltered.objs[[dataset]], features =  NULL, include.hne=TRUE, include.umi.cnts=TRUE, include.feature.cnts=TRUE, nrow=1)
+g2 <- add.title.to.plot(g2, ggtitle(paste0(dataset, " (", dataset.labels[[dataset]], ")")))
+           
+png(paste0(plots_dir, "/", analysis_file_prefix, "umi-gene-overlays.png"), width = 2 * 480, height = 1 * 480)
+g <- plot_grid(g1, g2, labels="AUTO", nrow=2)
+print(g)
+d <- dev.off()
+
+```
+
+
+
+```{r}
+# Compare FFPE to FF transcriptome wide
+names(biological.replicates) <- biological.replicates
+bio.rep.data.raw <-
+  llply(biological.replicates,
+        .fun = function(biological.replicate) {
+          bio.mat <-
+            ldply(datasets[grepl(datasets, pattern=biological.replicate)],
+                  .fun = function(dataset) {
+                    obj <- filtered.objs[[dataset]]
+                    mat <- as.matrix(GetAssayData(obj, slot="counts", assay="Spatial"))
+                    data.frame(gene = rownames(mat), expr.sum = as.vector(rowSums(mat)))
+                  })
+          expr.ffpe <-
+            ddply(subset(bio.mat, .id %in% names(datasets)[dataset.labels=="FFPE"]),
+                  .variables = c("gene"),
+                  .fun = function(df) {
+                    data.frame(mean.expr.ffpe = mean(df$expr.sum))
+                  })
+          expr.frozen <-
+            ddply(subset(bio.mat, .id %in% names(datasets)[dataset.labels=="Frozen"]),
+                  .variables = c("gene"),
+                  .fun = function(df) {
+                    data.frame(mean.expr.frozen = mean(df$expr.sum))
+                  })
+          m <- merge(expr.ffpe, expr.frozen, all = TRUE)
+          m[is.na(m)] <- 0
+          # g <- ggplot(data = m, aes(x = mean.expr.ffpe, y = mean.expr.frozen)) + geom_hex()
+          m
+
+        })
+
+```
+
+```{r}
+m <- bio.rep.data.raw[[1]]
+m <- subset(m, mean.expr.frozen > 0 | mean.expr.ffpe > 0)
+# See https://github.com/daattali/ggExtra/issues/27
+g <- ggplot(data = m, aes(x = log2(1+mean.expr.frozen), y = log2(1+mean.expr.ffpe)))
+g <- g + xlab("Frozen Log2(1 + Total UMIs Across Spots)") + ylab("FFPE Log2(1 + Total UMIs Across Spots)")
+g <- g + geom_point(col="transparent")+geom_hex()+labs(fill="UMIs")
+g <- g + theme(text = element_text(size = 15))
+g.leg <- get_legend(g)
+g <- ggMarginal(g + theme(legend.position = "none"), type="histogram")
+g <- plot_grid(g, g.leg, rel_widths=c(10,1))
+
+png(paste0(plots_dir, "/", analysis_file_prefix, "ffpe-vs-frozen-scatter.png"), width = 1 * 480)
+print(g)
+d <- dev.off()
+
+uniq.ffpe <- subset(m, mean.expr.frozen == 0 & mean.expr.ffpe > 0)$gene
+uniq.frozen <- subset(m, mean.expr.frozen > 0 & mean.expr.ffpe == 0)$gene
+
+```
+
+```{r}
+do.kegg <- function(geneset) {
+  gene.df <- bitr(geneset, fromType = "SYMBOL", toType = c("ENTREZID" ), OrgDb = org.Hs.eg.db)
+  mkk <- enrichKEGG(gene = gene.df$ENTREZID , organism = 'hsa', pvalueCutoff = 1, qvalueCutoff = 1)
+  mkk
+}
+```
+
+
+```{r}
+uniq.ffpe.go <- enrichGO(uniq.ffpe, OrgDb=org.Hs.eg.db, keyType= 'SYMBOL', ont = "ALL", pvalueCutoff=0.01, qvalueCutoff = 0.05)
+uniq.frozen.go <- enrichGO(uniq.frozen, OrgDb=org.Hs.eg.db, keyType= 'SYMBOL', ont = "ALL", pvalueCutoff=0.01, qvalueCutoff = 0.05)
+uniq.ffpe.kegg <- do.kegg(uniq.ffpe)
+uniq.frozen.kegg <- do.kegg(uniq.frozen)
+# dotplot(yy,showCategory=30)
+```
+```{r}
+g <- dotplot(uniq.ffpe.go,showCategory=20)
+png(paste0(plots_dir, "/", analysis_file_prefix, "ffpe-enrichment-go.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+
+```
+
+
+```{r}
+p.ffpe.go <- pairwise_termsim(uniq.ffpe.go)
+p.frozen.go <- pairwise_termsim(uniq.frozen.go)
+```
+
+```{r}
+g.go <- emapplot(p.frozen.go)
+```
+
+```{r}
+png(paste0(plots_dir, "/", analysis_file_prefix, "frozen-enrichment-go.png"), width = 2 * 480)
+print(g.go + theme(text = element_text(size = 25)))
+d <- dev.off()
+```
+
+```{r}
+file <- "/projects/compsci/jgeorge/USERS/alizae/PDAC/plots/BR6526/BR6526_Downsampling_coor.csv"
+df <- read.table(file, sep=",", header=TRUE)
+df <- subset(df, tissue == "12min" & Type %in% c("neoplastic", "connective", "non-neoplastic", "Totall_nCells"))
+# g <- ggplot(df, aes(x = nCells_40X, y = nCells_20X)) + facet_wrap(~ Type, scales="free") + geom_point() + xlab("Number of Cells (40X)") + ylab("Number of Cells (20X)") + theme(text = element_text(size = 20))
+p_load(ggpubr)
+labels <- c("connective" = "stromal", "neoplastic" = "neoplastic", "non-neoplastic" = "normal epithelial", "Totall_nCells" = "all cells")
+g <- ggscatter(df, x = "nCells_40X", y = "nCells_20X", add = "reg.line",  add.params = list(color = "blue"), cor.coef = TRUE, cor.coeff.args = list(method = "pearson", label.x = 3, label.sep = "\n"), cor.coef.size = 5, color="gray") + facet_wrap(~ Type, scales="free", labeller = as_labeller(labels)) + xlab("Number of Cells (40X)") + ylab("Number of Cells (20X)") + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", analysis_file_prefix, "hov-40x-vs-20x-12min.png"))
+print(g)
+d <- dev.off()
+```
+
+
+```{r}
+bio.rep.data <-
+  llply(biological.replicates,
+        .fun = function(biological.replicate) {
+          bio.mat <-
+            ldply(datasets[grepl(datasets, pattern=biological.replicate)],
+                  .fun = function(dataset) {
+                    obj <- filtered.objs[[dataset]]
+                    mat <- as.matrix(GetAssayData(obj, slot="counts", assay="cpm"))
+                    df <- reshape2::melt(mat)
+                    colnames(df) <- c("gene", "spot", "expr")
+                    ddply(df, .variables = c("gene"),
+                          .fun = function(sub.df) { 
+                            data.frame(mean.expr = mean(sub.df$expr))
+                          })
+                  })
+          expr.ffpe <-
+            ddply(subset(bio.mat, .id %in% names(datasets)[dataset.labels=="FFPE"]),
+                  .variables = c("gene"),
+                  .fun = function(df) {
+                    data.frame(mean.expr.ffpe = mean(df$mean.expr))
+                  })
+          expr.frozen <-
+            ddply(subset(bio.mat, .id %in% names(datasets)[dataset.labels=="Frozen"]),
+                  .variables = c("gene"),
+                  .fun = function(df) {
+                    data.frame(mean.expr.frozen = mean(df$mean.expr))
+                  })
+          m <- merge(expr.ffpe, expr.frozen)
+          # g <- ggplot(data = m, aes(x = mean.expr.ffpe, y = mean.expr.frozen)) + geom_hex()
+          m
+
+        })
+
+```
+
+
+```{r}
+hov.json.paths <- 
+  list("EuE-31-235" = "/projects/compsci/jgeorge/whitebr/cancer-cube/endometrium/analysis/hov/SC2200235/json/SC2200235-pyramid.json",
+       "EuE-31-165" = "/projects/compsci/jgeorge/whitebr/cancer-cube/endometrium/analysis/hov/SC2200165/json/SC2200165-pyramid.json")
+
+hov.tbls <-
+  llply(hov.json.paths,
+        .fun = function(hov.json.path) {
+          json.type.info.path <- "/projects/chuang-lab/USERS/whitebr/hover_net/type_info.json"
+          tbl <- extract.cell.info.from.hovernet.output(hov.json.path)[["df"]]
+          cell.info.tbl <- extract.hovernet.cell.info(json.type.info.path)
+          stbl <- merge(tbl, cell.info.tbl, by.x="type", by.y="id")
+        })
+```
+
+```{r}
+nms <- names(hov.tbls)
+names(nms) <- nms
+hov.mats <-
+  llply(nms,
+        .fun = function(dataset) {
+          deltas = get.visium.spot.distance.separation(unfiltered.objs[[dataset]])
+          dx <- deltas[1]
+          dy <- deltas[2]
+          
+          scale <- 2
+          col_offset <- -15
+          row_offset <- -9
+          #col_offset <- 0
+          #row_offset <- 0
+          stbl <- hov.tbls[[dataset]]
+          stbl$col <- unlist(lapply(stbl$centroid.x, function(x) (floor(x * scale / dx ) + 1 + col_offset)))
+          stbl$row <- unlist(lapply(stbl$centroid.y, function(y) (floor(y * scale / dy ) + 1 + row_offset)))
+          all.cell.types <- unique(stbl$label)
+          stbl$pos.id <- paste0(stbl$row, "-", stbl$col)
+          
+          cnt.tbl <- acast(stbl[, c("pos.id", "label")], pos.id ~ label)
+          pct.tbl <- t(apply(cnt.tbl, 1, function(row) row / sum(row)))
+          cnt.tbl <- cbind(cnt.tbl, total = rowSums(cnt.tbl))
+          colnames(pct.tbl) <- paste0(colnames(pct.tbl), ".frac")
+          all.tbl <- rbind(reshape2::melt(cnt.tbl), reshape2::melt(pct.tbl))
+          colnames(all.tbl) <- c("pos.id", "label", "value")
+          mat <- ddply(all.tbl, .variables = c("pos.id"), .fun = function(df) { vec <- df$value; names(vec) <- df$label; vec})
+          mat$pos.id <- as.character(mat$pos.id)
+          mat$row <- unlist(lapply(mat$pos.id, function(str) as.numeric(strsplit(str, split="-")[[1]][1])))
+          mat$col <- unlist(lapply(mat$pos.id, function(str) as.numeric(strsplit(str, split="-")[[1]][2])))
+          mat
+        })
+```
+
+```{r}
+sample <- "EuE-31-235"
+#sample <- "EuE-31-165"
+mat <- hov.mats[[sample]]
+obj <- filtered.objs[[sample]]
+meta <- obj[[]]
+meta$row.name <- rownames(meta)
+meta <- merge(meta[, c("row.name", "row", "col")], mat, by = c("row", "col"), all.x=TRUE)
+rownames(meta) <- meta$row.name
+meta <- meta[, !(colnames(meta) %in% c("row.name"))]
+meta[is.na(meta)] <- 0
+obj <- add.metadata.to.seurat.obj(obj, meta)
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+plot.features(obj, features="connec")
+```
+
+
+```{r}
+mol.info.file <- paste0(hr, "molecule_info.h5")
+h5ls(mol.info.file)
+
+probe.gene.ids <- h5read(mol.info.file, "/features/target_sets/Visium Human Transcriptome Probe Set")
+gene.ensg.ids <- h5read(mol.info.file, "/features/id")
+gene.names <- h5read(mol.info.file, '/features/name')
+gene.indices <- 1:length(gene.ensg.ids)
+nonprobe.gene.ids <- gene.indices[!(gene.indices %in% probe.gene.ids)]
+nonprobe.gene.names <- sort(gene.names[nonprobe.gene.ids])
+probe.gene.names <- gene.names[probe.gene.ids]
+
+# Calculate per-spot saturation, per-spot num reads, per-spot num unmapped reads
+#gene <- h5read(mol.info.file, "/features/name")[h5read(mol.info.file, "/feature_idx")+1]
+#umi.type <- h5read(mol.info.file, "/umi_type")
+mol.info.file <- paste0(spaceranger_dirs[[3]], "molecule_info.h5")
+df <- data.frame(barcode = h5read(mol.info.file, "/barcodes")[h5read(mol.info.file, "/barcode_idx")+1], count = h5read(mol.info.file, "/count"))
+spot.saturation <- ddply(df, 
+                         .variables = c("barcode"), 
+                         .fun = function(tbl) {
+                           tot.reads <- sum(tbl$count)
+                           umis <- nrow(tbl)
+                           saturation <- (tot.reads - umis) / tot.reads
+                           data.frame(tot.reads = tot.reads, tot.umis = umis, saturation = saturation)
+                         })
+
+# /projects/compsci/jgeorge/USERS/somara/endometrium/SC2200236_EuE-31/spaceranger/probe_set.csv
+
+# Run hovernet on these 4 guys
+# Align hovernet
+# Goal: disentangle issue with markers / deconvolution
+# Write function for saturation
+# Store alignment metrics
+# Merge saturation and alignment metrics to one another
+# Append both to metadata
+# Plot background and foreground saturation for FFPE and FF.
+# Annotated gene as belonging to probe set or not
+# Function to get probe and non-probe genes
+
+```
+
+
+
+
+```{r}
+ffpe.dataset <- "EuE-31-236"
+frozen.dataset <- "EuE-31-164"
+ffpe.bam.file <- paste0(spaceranger_dirs[[ffpe.dataset]], "/possorted_genome_bam.bam")
+frozen.bam.file <- paste0(spaceranger_dirs[[frozen.dataset]], "/possorted_genome_bam.bam")
+seqname <- "chr1"
+param <- ScanBamParam(tag=c('CB','RE'), which=GRanges(seqname, IRanges(1, 248956422)))
+# param <- ScanBamParam(tag=c('CB','RE'), what=c("rname"))
+x.ffpe <- scanBam(ffpe.bam.file, param=param)[[1]]
+x.ffpe.sv <- x.ffpe
+# unique(x.ffpe$rname)
+ [1] chr1       chr10      chr11      chr12      chr13      chr14      chr15      chr16      chr17      chr18     
+[11] chr19      chr2       chr20      chr21      chr22      chr3       chr4       chr5       chr6       chr7      
+[21] chr8       chr9       chrM       chrX       chrY       KI270728.1 KI270733.1 KI270711.1 <NA>      
+#param <- ScanBamParam(tag=c('CB','RE'))
+#x.ffpe <- scanBam(ffpe.bam.file, param=param)[[1]]
+#length(x.ffpe$tag$RE)
+#[1] 281541508
+#table(x.ffpe$tag$RE)
+#
+#        E 
+#278616742 
+#sum(colSums(GetAssayData(filtered.objs[[ffpe.dataset]],slot="counts")))
+#57825770
+#sum(align.metrics[[ffpe.dataset]]$E)
+#5119859
+#sum(unfiltered.objs[[ffpe.dataset]][[]]$tot.umis)
+#75915173
+#sum(unfiltered.objs[[ffpe.dataset]][[]]$E)
+#5050277
+#param <- ScanBamParam(tag=c('CB','UB', 'RE'), which=GRanges(seqname, IRanges(1, 1e7)), #flag=scanBamFlag(isUnmappedQuery=FALSE))
+#table(is.na(x.ffpe$rname))
+#    FALSE      TRUE 
+#  5162530 276378978 
+#   FALSE      TRUE 
+#  5162530 273496883 
+param <- ScanBamParam(tag=c('CB','UB', 'RE'), which=GRanges(seqname, IRanges(1, 1e7)))
+x <- scanBam(bam.file, param=param)[[1]]
+df <- as.data.frame(x$tag)
+ret <- scanBamHeader(c(bam.file))
+sq.indices <- names(ret[[1]]$text) == "@SQ"
+seqnames <- as.vector(unlist(lapply(ret[[1]]$text[sq.indices], function(x) gsub(x[1], pattern="SN:", replacement=""))))
+
+names(seqnames) <- seqnames
+foo <- ldply(seqnames, .parallel = TRUE,
+             .fun = function(seqname) {
+               # CB: error-corrected spot barcode
+               # UB: error-corrected molecular barcode
+               # RE: E = exonic, N = intronic, I = intergenic
+               # param <- ScanBamParam(tag=c('CB','RE'), what=c("flag"), which=GRanges(seqname, IRanges(1, 1e7)))
+print(seqname)
+               param <- ScanBamParam(tag=c('CB','RE'), which=GRanges(seqname, IRanges(1, 1e7)))
+x <- scanBam(bam.file, param=param)[[1]]
+if(is.null(x$tag$CB)) { return(NULL) }
+if(is.null(x$tag$RE)) { return(NULL)}
+df <- as.data.frame(x$tag)
+# df$unmapped <- bamFlagAsBitMatrix(x$flag)[,"isUnmappedQuery"]
+ddply(df, .variables = c("CB"),
+      .fun = function(df.cb) {
+        if(nrow(df.cb) == 0) { return(NULL) }
+        data.frame(E = length(which(df.cb$RE == "E")),
+                   I = length(which(df.cb$RE == "I")),
+                   N = length(which(df.cb$RE == "N")),
+                   tot.mapped.reads = nrow(df.cb)
+                   # unmapped = sum(df.cb$unmapped)
+                   )
+                  
+                   
+      })
+             })
+
+
+# See description of _cell_ranger filtering here:
+# https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/algorithms/overview
+# I believe the bam we are reading already has duplicate UMIs filtered
+param <- ScanBamParam(tag=c('CB'),flag=scanBamFlag(isUnmappedQuery=TRUE))
+unmr <- scanBam(bam.file, param=param)[[1]]
+unmr.tbl <- as.data.frame(table(na.omit(unmr$tag$CB)))
+colnames(unmr.tbl) <- c("CB", "tot.unmapped.reads")
+
+baz <- ddply(foo, .variables=c("CB"), .fun = function(df) data.frame(E = sum(df$E), I = sum(df$I), N = sum(df$N), tot.mapped.reads = sum(df$tot.mapped.reads)))
+
+baz <- merge(baz, unmr.tbl, all.x=TRUE)
+#baz <- baz[!is.na(baz$CB),]
+baz$total.reads <- baz$tot.mapped.reads + baz$tot.unmapped.reads
+baz$E.frac.mapped <- baz$E / baz$tot.mapped.reads
+baz$I.frac.mapped <- baz$I / baz$tot.mapped.reads
+baz$N.frac.mapped <- baz$N / baz$tot.mapped.reads
+# tmp <- merge(unfiltered.objs[[3]][[]], baz, by.x = c("row.names"), by.y = c("CB"))
+```
+
+
+```{r}
+expressed.genes <- 
+  llply(filtered.objs,
+        .fun = function(obj) {
+          mat <- Seurat::GetAssayData(obj, assay="Spatial")
+          rownames(mat)[rowSums(mat) > 0]
+        })
+
+num.expressed.genes <-
+  llply(expressed.genes, .fun = function(lst) length(lst))
+
+num.expressed.genes <- data.frame(sample = names(num.expressed.genes), metric = "Total.Genes.Detected", value = as.vector(unlist(num.expressed.genes)))
+
+```
+
+
+
+```{r}
+# Read in the spaceranger summaries
+summary.tbl <- 
+  ldply(datasets, 
+        .fun = function(dataset) {
+          # json.summary.file <- paste0(spaceranger_dirs[[dataset]], "/", "summary.json")
+          # json.summary <- fromJSON(file=json.summary.file)
+          # json.summary
+          seq.metrics.file <- paste0(spaceranger_dirs[[dataset]], "/", "metrics_summary.csv")
+          tbl <- read.table(seq.metrics.file, sep=",", header=TRUE, as.is=TRUE)
+          #rename.cols <- list("Reads.Mapped.Confidently.to.Probe.Set" = "Reads.Mapped.Confidently.to.Genome", "Number.of.Panel.Genes....10.UMIs" = "Total.Genes.Detected")
+          rename.cols <- list("Reads.Mapped.Confidently.to.Probe.Set" = "Reads.Mapped",
+                              "Reads.Mapped.Confidently.to.Genome"= "Reads.Mapped" ,"Number.of.Panel.Genes....10.UMIs" = "Total.Genes.Detected")
+
+          for(col in names(rename.cols)) {
+            flag <- colnames(tbl) == col
+            colnames(tbl)[flag] <- rename.cols[[col]]
+          }
+          tbl
+        })
+colnames(summary.tbl)[1] <- "sample"
+
+# cols <- c("Total.Genes.Detected", "Reads.Mapped.Confidently.to.Genome",  "Number.of.Reads",  "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
+#cols <- c("Reads.Mapped.Confidently.to.Genome",  "Number.of.Reads",  "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
+cols <- c("Number.of.Reads", "Reads.Mapped", "Number.of.Spots.Under.Tissue", "Fraction.of.Spots.Under.Tissue", "Median.Genes.per.Spot", "Median.UMI.Counts.per.Spot", "Fraction.Reads.in.Spots.Under.Tissue", "Sequencing.Saturation")
+summary.tbl <- summary.tbl[, c("sample", cols)]
+summary.tbl <- melt(summary.tbl, id.vars = c("sample"))
+colnames(summary.tbl) <- c("sample", "metric", "value")
+summary.tbl <- rbind(summary.tbl, num.expressed.genes)
+summary.tbl$metric <- gsub(summary.tbl$metric, pattern="\\.", replacement=" ")
+cols <- gsub(cols, pattern="\\.", replacement=" ")
+summary.tbl$metric <- factor(summary.tbl$metric, levels = c("Total Genes Detected",cols))
+summary.tbl$sample <- factor(summary.tbl$sample, levels=datasets)
+summary.tbl <- merge(summary.tbl, dataset.metadata.df, by.x = "sample", by.y ="sample.name")
+
+
+g <- ggplot(data = subset(summary.tbl, metric == "Fraction Reads in Spots Under Tissue"), aes(x = sample, y = value, fill=type)) + geom_bar(stat="identity") + scale_fill_manual(values= unname(unlist(color_list)))
+g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g <- g + ylab("Fraction Reads in Spots\nUnder Tissue") + xlab("")
+g <- g + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", analysis_file_prefix, "frac-reads-in-spots.png"))
+print(g)
+d <- dev.off()
+
+g <- ggplot(data = subset(summary.tbl, !(metric %in% c("Fraction Reads in Spots Under Tissue", "Number of Spots Under Tissue"))), aes(x = sample, y = value, fill=type)) + geom_bar(stat="identity") + scale_fill_manual(values= unname(unlist(color_list))) + facet_wrap(~ metric, scales="free", labeller = label_wrap_gen())
+g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+g <- g + ylab("")
+png(paste0(plots_dir, "/", analysis_file_prefix, "summary.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+```
+
+```{r}
+# Perform normalization of counts using SCTransform (which fits a negative binomial to the count data)
+# This adds a new assay "SCT" to the returned Seurat object. That assay has slots "counts" (the corrected counts),
+# "data" (log1p(counts)), and "scale.data" (the "pearson residuals").
+# These would be accessible via GetAssayData(filtered.objs[[1]], slot = "data", assay = "SCT")
+# Running with default parameters (the most interesting of which look to be variable.features.n and/or variable.features.rv.th)
+filtered.objs <-
+  llply(filtered.objs,
+        .fun = function(obj) suppressWarnings(SCTransform(obj, assay = "Spatial", verbose = FALSE)))
+```
+
+```{r}
+# Also apply scran deconvolution-based normalization.
+# scran uses SingleCellExperiment objects, so we will have to convert back and forth between SCEs and Seurat objects.
+# See notes on interoperability here: https://satijalab.org/seurat/archive/v3.1/conversion_vignette.html
+
+filtered.objs <-
+  llply(filtered.objs, .parallel = FALSE,
+        .fun = function(obj) {
+          
+          # Convert from a Seurat object to a SingleCellExperiment
+          sce <- as.SingleCellExperiment(obj, assay = "Spatial")
+
+          
+          # Perform the scran normalization (see https://bioconductor.org/packages/devel/bioc/vignettes/scran/inst/doc/scran.html)
+          clusters <- quickCluster(sce)
+          sce <- computeSumFactors(sce, clusters=clusters)
+          sce <- logNormCounts(sce)
+          
+          # Convert back from SingleCellExperiment to Seurat object. 
+          tmp <- as.Seurat(sce, counts = "counts", data = "logcounts", assay="scran")
+          obj[["scran"]] <- tmp[["scran"]]
+          obj <- FindVariableFeatures(obj, assay="scran")
+          obj
+        })
+          
+```
+
+
+```{r}
+# Merge the unfiltered objs into one Seurat object
+all.unfiltered.objs <- Reduce(merge, unfiltered.objs)
+Idents(all.unfiltered.objs) <- all.unfiltered.objs$orig.ident
+```
+
+
+```{r}
+# Merge the filtered objs into one Seurat object
+all.filtered.objs <- Reduce(merge, filtered.objs)
+Idents(all.filtered.objs) <- all.filtered.objs$orig.ident
+```
+
+
+```{r}
+
+obj.sct <- merge.Seurat.objs(all.filtered.objs, "SCT")
+
+png(paste0(plots_dir,"clusters-merged-UMAP-sct.png"),width=1400,height =600)
+obj.sct$Sample=obj.sct$orig.ident
+obj.sct$Cluster=obj.sct@active.ident
+gg <- DimPlot(obj.sct, reduction = "umap", group.by = c("Cluster","Sample")) 
+print(gg)
+d <- dev.off()
+
+per_id_per_cluster_tbl<-table(obj.sct@meta.data$seurat_clusters, obj.sct@meta.data$orig.ident)
+
+foo <- (melt(per_id_per_cluster_tbl))
+colnames(foo) <- c("cluster", "sample", "cnt")
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+for(target_sample in biological.replicates) {
+  bar <- subset(foo, grepl(sample, pattern=target_sample))
+  bar <- subset(bar, cnt != 0)
+  bar <- melt(acast(bar, cluster ~ sample, fill = 0))
+  colnames(bar) <- c("cluster", "sample", "cnt")
+  bar <- ddply(bar, .variables = c("cluster"), .fun = function(df) {df$frac <- df$cnt / sum(df$cnt); return(df)})
+  bar$cluster <- factor(as.character(bar$cluster), levels = unique(sort(bar$cluster)))
+  png(paste0(plots_dir,target_sample,"-cluster-proportions-sct.png"))
+  g <- ggplot() + geom_col(data = bar, aes(x=cluster,y=frac,fill=sample)) + scale_fill_manual(values=cbbPalette)
+  g <- g + ylab("Fraction") + xlab("Cluster")
+  g <- g + theme(text = element_text(size = 20))
+  print(g)
+  d <- dev.off()
+}
+
+bar <- subset(foo, cnt != 0)
+bar <- melt(acast(bar, cluster ~ sample, fill = 0))
+colnames(bar) <- c("cluster", "sample", "cnt")
+bar <- ddply(bar, .variables = c("cluster"), .fun = function(df) {df$frac <- df$cnt / sum(df$cnt); return(df)})
+bar$cluster <- factor(as.character(bar$cluster), levels = unique(sort(bar$cluster)))
+png(paste0(plots_dir,"all-cluster-proportions-sct.png"))
+g <- ggplot() + geom_col(data = bar, aes(x=cluster,y=frac,fill=sample)) + scale_fill_manual(values=cbbPalette)
+g <- g + ylab("Fraction") + xlab("Cluster")
+g <- g + theme(text = element_text(size = 20))
+print(g)
+d <- dev.off()
+
+png(paste0(plots_dir,"all-cluster-proportions-heatmap-sct.png"),width=980, height=980)
+colSide <- as.vector(unlist(color_list[unlist(dataset.labels[levels(bar$sample)])]))
+heatmap.2(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"), ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)),xlab="Cluster", ylab="Sample",margins=c(12,8),trace="none",lhei=c(1, 6),keysize=1,key.title="Proportion")
+d <- dev.off()
+```
+
+```{r}
+obj.scran <- merge.Seurat.objs(all.filtered.objs, "scran")
+
+png(paste0(plots_dir,"clusters-merged-UMAP-scran.png"),width=1400,height =600)
+obj.scran$Sample=obj.scran$orig.ident
+obj.scran$Cluster=obj.scran@active.ident
+
+gg <- DimPlot(obj.scran, reduction = "umap", group.by = c("Cluster","Sample")) 
+print(gg)
+d <- dev.off()
+
+per_id_per_cluster_tbl<-table(obj.scran@meta.data$seurat_clusters, obj.scran@meta.data$orig.ident)
+
+foo <- (melt(per_id_per_cluster_tbl))
+colnames(foo) <- c("cluster", "sample", "cnt")
+
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+for(target_sample in biological.replicates) {
+  bar <- subset(foo, grepl(sample, pattern=target_sample))
+  bar <- subset(bar, cnt != 0)
+  bar <- melt(acast(bar, cluster ~ sample, fill = 0))
+  colnames(bar) <- c("cluster", "sample", "cnt")
+  bar <- ddply(bar, .variables = c("cluster"), .fun = function(df) {df$frac <- df$cnt / sum(df$cnt); return(df)})
+  bar$cluster <- factor(as.character(bar$cluster), levels = unique(sort(bar$cluster)))
+  png(paste0(plots_dir,target_sample,"-cluster-proportions-scran.png"))
+  g <- ggplot() + geom_col(data = bar, aes(x=cluster,y=frac,fill=sample)) + scale_fill_manual(values=cbbPalette)
+  g <- g + ylab("Fraction") + xlab("Cluster")
+  g <- g + theme(text = element_text(size = 20))
+  print(g)
+  d <- dev.off()
+}
+
+bar <- subset(foo, cnt != 0)
+bar <- melt(acast(bar, cluster ~ sample, fill = 0))
+colnames(bar) <- c("cluster", "sample", "cnt")
+bar <- ddply(bar, .variables = c("cluster"), .fun = function(df) {df$frac <- df$cnt / sum(df$cnt); return(df)})
+bar$cluster <- factor(as.character(bar$cluster), levels = unique(sort(bar$cluster)))
+png(paste0(plots_dir,"all-cluster-proportions-scran.png"))
+g <- ggplot() + geom_col(data = bar, aes(x=cluster,y=frac,fill=sample)) + scale_fill_manual(values=cbbPalette)
+g <- g + ylab("Fraction") + xlab("Cluster")
+g <- g + theme(text = element_text(size = 20))
+print(g)
+d <- dev.off()
+
+colSide <- as.vector(unlist(color_list[unlist(dataset.labels[levels(bar$sample)])]))
+par(cex.main=80)
+png(paste0(plots_dir,"all-cluster-proportions-heatmap-scran.png"),width=680, height=980)
+heatmap.2(acast(bar[, c("cluster","sample","frac")], cluster ~ sample),row_title="Cluster",column_title="Sample",heatmap_legend_param=list(title="Proportion"), ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)),ylab="Cluster", xlab="Sample",margins=c(13,6),trace="none",lhei=c(1,8),keysize=2,key.title="Proportion",cexRow = 2.5,cexCol = 2.5) 
+d <- dev.off()
+```
+Find the families of the genes that exist only in FFPE and FF datasets
+```{r}
+
+ffpe.genes <- unique(Reduce(c,expressed.genes[ffpe.datasets]))
+frozen.genes <- unique(Reduce(c,expressed.genes[frozen.datasets]))
+
+x <- list(FFPE = ffpe.genes, frozen = frozen.genes)
+g <- ggVennDiagram(x, label_size = 10, set_size = 10)
+g <- g + theme(legend.position = "none") 
+png(paste0(plots_dir,"ffpe-frozen-venn.png"))
+print(g)
+d <- dev.off()
+
+# Get the genes that are only highly expressed in fresh frozen samples
+# and output their "biotype" -- i.e., whether are coding genes, etc.
+
+if (species_sample[1]=='Human'){
+    gene_db = useMart("ensembl",dataset="hsapiens_gene_ensembl")
+} else {
+  gene_db = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+}
+
+frozen.only <- frozen.genes[!(frozen.genes %in% ffpe.genes)]
+frozen.only.biotypes <- get.biotypes (frozen.only,gene_db)
+png(paste0(plots_dir,"frozen-biotypes.png"))
+grid.table(frozen.only.biotypes,rows=NULL)
+d <- dev.off()
+
+ffpe.only <- ffpe.genes[!(ffpe.genes %in% frozen.genes)]
+ffpe.only.biotypes <- get.biotypes (ffpe.only,gene_db)
+png(paste0(plots_dir,"ffpe-biotypes.png"))
+grid.table(ffpe.only.biotypes,rows=NULL)
+d <- dev.off()
+```
+
+
+
+```{r}
+# Add simplified sample names
+sample.name.df <- data.frame(all.unfiltered.objs@meta.data[, c("orig.ident"), drop = FALSE])
+sample.name.df$sample.name <- unlist(lapply(sample.name.df$orig.ident, function(str) unlist(strsplit(str, split="_"))[1]))
+all.unfiltered.objs <- AddMetaData(all.unfiltered.objs, sample.name.df[, c("sample.name"), drop = FALSE])
+```
+
+
+
+```{r}
+# Plot the number of UMI counts per spot for unfiltered data (in files *unfiltered-spot-counts.png)
+titles <- llply(datasets, .fun = function(dataset) { paste0(dataset, "\n", dataset.labels[[datasset]]) })
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nCount_Spatial", legend.name = "# UMIs (K)")
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-counts.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+# Plot the number of feature counts per spot for unfiltered data (in files *unfiltered-spot-features.png)
+g.all <- plot.feature.across.samples(unfiltered.objs, titles, feature = "nFeature_Spatial", legend.name = "# Features (K)")
+g.all <- add.title.to.plot(g.all, "All Spots")
+png(paste0(plots_dir, "/", analysis_file_prefix, "unfiltered-spot-features.png"))
+print(g.all)
+d <- dev.off()
+```
+
+```{r}
+# Plot the raw H&E images (in files *hne.png)
+hne.plots <-
+  llply(datasets,
+        .fun = function(dataset) {
+          g <- plot.hne(unfiltered.objs[[dataset]], keep.invisible.legend = TRUE)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist = hne.plots)
+g.all <- add.title.to.plot(g.all, "Raw H&E")
+png(paste0(plots_dir, "/", analysis_file_prefix, "hne.png"))
+print(g.all)
+d <- dev.off()
+```
+
+
+
+```{r}
+# Plot the distribution of UMI counts and gene counts over spots, as a function of whether those spots and within the tissue or outside of it (in file *count-and-feature-dist.png)
+tbl <- all.unfiltered.objs@meta.data
+tbl <- merge(tbl, dataset.metadata.df)
+# tbl <- tbl[order(tbl$sample.name, tbl$type, tbl$sample.name, decreasing=TRUE),]
+tbl$sample <- factor(tbl$sample, levels = datasets)
+tbl$sample.label <- paste0(tbl$sample.name, "\n", tbl$type)
+g.cnt <- plot.distributions.vs.cell.type(tbl, response.var = "nCount_Spatial", facet.var = "sample.label") + ylab("UMI Counts (log2)")
+g.feature <- plot.distributions.vs.cell.type(tbl, response.var = "nFeature_Spatial", facet.var = "sample.label") + ylab("Feature Counts (log2)")
+g <- plot_grid(g.cnt, g.feature, nrow=1, labels = "AUTO")
+png(paste0(plots_dir, "/", analysis_file_prefix, "count-and-feature-dist.png"), width = 2 * 480)
+print(g)
+d <- dev.off()
+
+```
+
+
+```{r}
+# Calculate the median number of reads (across spots) for each sample
+# NB: using filtered data here
+median.num.reads <- llply(filtered.objs, .fun = function(obj) median(colSums(get.count.matrix(obj))))
+```
+
+```{r}
+# Perform a sensitivity analysis -- i.e., show the number of detected genes/features as a function
+# of total UMI counts per spot. More precisely, we will plot the median (across spots) number of
+# detected genes vs the median (across spots) UMI count.
+
+all.downsample.cnts <- round(seq(from=0.1,to=0.9,by=0.1)*max(unlist(median.num.reads)))
+names(all.downsample.cnts) <- all.downsample.cnts
+downsample.feature.df <-
+  ldply(filtered.objs,
+        .parallel = FALSE,
+        .fun = function(obj) {
+          expr_mat <- get.count.matrix(obj)
+          median.cnts <- median(colSums(expr_mat))
+          downsample.cnts <- all.downsample.cnts[all.downsample.cnts < median.cnts]
+          tbl <- 
+            ldply(downsample.cnts, .parallel = TRUE,
+                  .fun = function(tot_cnt) {
+                    data.frame(num.features = compute.num.features.at.total.reads(expr_mat, tot_cnt))
+                  })
+          colnames(tbl)[1] <- "downsample.count"
+          tbl
+        })
+colnames(downsample.feature.df)[1] <- "sample.name" 
+downsample.feature.df$downsample.count <- as.numeric(downsample.feature.df$downsample.count)
+downsample.feature.df <- merge(downsample.feature.df, dataset.metadata.df)
+```
+
+```{r}
+# Plot the sensitivity (# of detected genes/features vs # of reads; in file *num-features-vs-num-downsampled-reads.png)
+g <- ggplot(downsample.feature.df, aes(x = downsample.count, y = num.features, colour = sample.name, shape = type))
+g <- g + geom_point()
+g <- g + xlab("Spot Read Count (Median)") + ylab("Spot Feature Count (Median)")
+g <- g + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", analysis_file_prefix, "num-features-vs-num-downsampled-reads.png"))
+print(g)
+d <- dev.off()
+            
+```
+
+
+```{r}
+plot.top.genes <- function(mat, n.top = 20, highlight.genes = NULL) {
+  mat <- sweep(mat, 2, colSums(mat), "/")
+  top.genes <- get.top.genes.matrix(mat, n.top = n.top)
+  df <- melt(mat[top.genes,])
+  colnames(df) <- c("gene", "spot", "value")
+  df$gene <- factor(df$gene, levels = rev(top.genes))
+  g <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = 100 * value), fill = (scales::hue_pal())(n.top)[n.top:1]) + coord_flip()
+  g <- g + ylab("% total count per cell") + xlab("")
+  g <- g + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
+  if(!is.null(highlight.genes)) {
+    vec_fontface <- ifelse(levels(df$gene) %in% highlight.genes,"bold","plain")
+    g <- g + theme(axis.text.y=element_text(face=vec_fontface))
+  }
+  g
+}
+```
+
+
+```{r}
+# Get the most prevalent genes expressed in the background ...
+top.genes.background <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          mat <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          mat <- sweep(mat, 2, colSums(mat), "/")
+          top.genes <- get.top.genes.matrix(mat, n.top = 20)
+          top.genes
+        })
+
+# ... and in the tissue
+top.genes.tissue <-
+  llply(datasets,
+        .fun = function(data.set) {
+          obj <- unfiltered.objs[[data.set]]
+          mat <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          mat <- sweep(mat, 2, colSums(mat), "/")
+          top.genes <- get.top.genes.matrix(mat, n.top = 20)
+          top.genes
+        })
+
+```
+
+```{r}
+# Find genes that are common between the (union of) background genes and the (union of) tissue genes
+all.background.genes <- unique(Reduce("c", top.genes.background))
+all.tissue.genes <- unique(Reduce("c", top.genes.tissue))
+common.genes <- intersect(all.background.genes, all.tissue.genes)
+
+intersect.background.genes <- unique(Reduce("intersect", top.genes.background))
+intersect.tissue.genes <- unique(Reduce("intersect", top.genes.tissue))
+
+
+flag <- dataset.labels == "FFPE"
+ffpe.background.genes <- unique(Reduce("c", top.genes.background[flag]))
+ffpe.tissue.genes <- unique(Reduce("c", top.genes.tissue[flag]))
+common.ffpe.genes <- intersect(ffpe.background.genes, ffpe.tissue.genes)
+intersect.tissue.ffpe.genes <- unique(Reduce("intersect", top.genes.tissue[flag]))
+```
+
+
+
+
+```{r}
+# Create plots showing the top 20 most prevalent genes in the background -- highlighting (in bold) the
+# genes that are common to the background and tissue
+top.genes.background.plts <-
+  llply(datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          background.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = intersect.background.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.background.plts)
+g.all <- add.title.to.plot(g.all, "Background Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-background-spot.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Do the same for spots in the tissue
+top.genes.tissue.plts <-
+  llply(datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = intersect.tissue.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.tissue.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Repeat both of the above, but only for FFPE
+# Create plots showing the top 20 most prevalent genes in the background -- highlighting (in bold) the
+# genes that are common to the background and tissue
+top.genes.background.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          background.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 0, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(background.sub.matrix, n.top = 20, highlight.genes = common.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.background.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Background Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-background-spot-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+# Do the same for spots in the tissue
+top.genes.tissue.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = common.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.tissue.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+top.genes.intersect.tissue.ffpe.plts <-
+  llply(ffpe.datasets,
+        .fun = function(dataset) {
+          obj <- unfiltered.objs[[dataset]]
+          tissue.sub.matrix <- as.matrix(subset.matrix.based.on.tissue.status(obj, tissue.val = 1, assay = "Spatial", slot = "counts"))
+          g <- plot.top.genes(tissue.sub.matrix, n.top = 20, highlight.genes = intersect.tissue.ffpe.genes)
+          title <- paste0(dataset, "\n" , dataset.labels[[dataset]])
+          g <- g + ggtitle(title)
+          g
+        })
+g.all <- plot_grid(plotlist=top.genes.intersect.tissue.ffpe.plts)
+g.all <- add.title.to.plot(g.all, "Tissue Spots", size = 25)
+png(paste0(plots_dir, "/", analysis_file_prefix, "most-prevalent-genes-tissue-spot-intersect-ffpe-only.png"), width = 2 * 480, height = 2 * 480)
+print(g.all)
+d <- dev.off()
+```
+
+Identify and plot in VennDiagram the SpatialDE identified genes
+```{r}
+mylist_qval<-list()
+mylist_top50_LLR<-list()
+mylist_top100_LLR<-list()
+for (i in names(long.dataset.names)){
+  r<-read.csv(file = paste0(base_dir, "/automatic_analysis/results/",i,"/stSpatialDE.csv"), header = TRUE, as.is = TRUE, row.names = 1)
+  r  <-r[r$qval==0,]
+  mm <-sort(r$LLR,decreasing= TRUE,index.return = TRUE)
+  
+  mylist_qval[[ i ]]<-r$g.1
+  mylist_top50_LLR[[ i ]]<-r$g.1[mm$ix[1:50]]
+  mylist_top100_LLR[[ i ]]<-r$g.1[mm$ix[1:100]]
+}
+dictionary_terms<-c(unlist(unique(dataset.labels)),unlist(biological.replicates),"")
+for (temp in dictionary_terms){
+temp_list1 <- list()
+temp_list2 <- list()
+temp_list3 <- list()
+
+#temp<-dictionary_terms[1]
+if ((temp==dictionary_terms[1]|temp==dictionary_terms[2])&(length(mylist_qval[dataset.labels==temp])<=4 & length(mylist_qval[dataset.labels==temp])>=2)){
+  temp_list1<-mylist_qval[dataset.labels==temp]
+  temp_list2<-mylist_top50_LLR[dataset.labels==temp]
+  temp_list3<-mylist_top100_LLR[dataset.labels==temp]
+}else if((temp==dictionary_terms[3] | temp==dictionary_terms[4]) & (length(mylist_qval[dataset.labels==temp]) <=4 & length(mylist_qval[dataset.labels==temp])>=2)) {
+  temp_list1<-mylist_qval[grepl(datasets, pattern=temp)]
+  temp_list2<-mylist_top50_LLR[grepl(datasets, pattern=temp)]
+  temp_list3<-mylist_top100_LLR[grepl(datasets, pattern=temp)]
+}else if (temp=="" & ( length(mylist_qval)<=4 & length(mylist_qval)>2)){
+  temp_list1<-mylist_qval
+  temp_list2<-mylist_top50_LLR
+  temp_list3<-mylist_top100_LLR
+}
+if (length(temp_list1)!=0){
+
+g <- plot.VennDiagram.list(temp_list1, paste0("Spatially Differentially Expressed genes\n with 0 p-value in ",curr_datatypes, " ",temp))
+print(g)
+d <- dev.off()
+
+g <- plot.VennDiagram.list(temp_list2, paste0("Top 50 Spatially Differentially Expressed \ngenes  in ",curr_datatypes, " ",temp))
+print(g)
+d <- dev.off()
+
+g <- plot.VennDiagram.list(temp_list3, paste0("Top 100 Spatially Differentially Expressed \ngenes  in ",curr_datatypes, " ",temp))
+print(g)
+d <- dev.off()
+}
+}
+```
+
+
+Setting up de-convolution pipeline
+```{r}
+counts_sc_full <- read.csv(file =paste0("/projects/compsci/USERS/somara/endometrium/","endo-2022_global.csv"))
+counts_sc<-counts_sc_full
+counts_sc<-as.data.frame(t(counts_sc))
+colnames(counts_sc)<-counts_sc[1,] ;
+counts_sc <- counts_sc[-1, ]
+counts_sc <- mutate_all(counts_sc, function(x) as.integer(as.character(x)))
+
+cell_types_full<- read.csv(file =paste0("/projects/compsci/USERS/somara/endometrium/","endo-2022_global_celltype.csv"))
+cell_types<- cell_types_full
+cell_types <- setNames(cell_types[[2]], cell_types[[1]])
+cell_types <- as.factor(cell_types) # convert to factor data type
+
+nUMI <- colSums(counts_sc) # In this case, total counts per pixel is nUMI
+
+reference <- Reference(counts_sc, cell_types, nUMI)
+saveRDS(reference,file.path(base_dir,'RCTD_reference_full.rds'))
+#reference <- readRDS(paste0(base_dir,'RCTD_reference_full.rds'))
+
+my_puck <- list()
+#my_RCTD <- list() 
+my_RCTD_doublet <- list() 
+for(i in datasets){
+coords<-as.data.frame(filtered.objs[[i]]@meta.data$col)
+colnames(coords)<-'x'
+coords3<-as.data.frame(filtered.objs[[i]]@meta.data$row)
+colnames(coords3)<-'y'
+coords<-cbind(coords,coords3)
+rownames(coords)<-filtered.objs[[i]]@assays[["Spatial"]]@counts@Dimnames[[2]]
+counts_sp<-as.data.frame(as.matrix(filtered.objs[[i]]@assays[["SCT"]]@counts))
+nUMI <- colSums(counts_sp) # In this case, total counts per pixel is nUMI
+
+my_puck[[i]] <- SpatialRNA(coords, counts_sp, nUMI)
+myRCTD <- create.RCTD(my_puck[[i]], reference, max_cores = 32)
+#my_RCTD[[i]] <- run.RCTD(myRCTD, doublet_mode = 'full')
+my_RCTD_doublet[[i]] <- run.RCTD(myRCTD, doublet_mode = "doublet")
+
+}
+#saveRDS(my_RCTD,file.path(base_dir,'my_RCTD_visium_full_SCT.rds'))
+saveRDS(my_RCTD_doublet,file.path(base_dir,'my_RCTD_visium_doublet_SCT.rds'))
+
+#my_RCTD<-readRDS(file.path(base_dir,'my_RCTD_visium_full_SCT.rds'))
+#my_RCTD_doublet<-readRDS(file.path(base_dir,'my_RCTD_visium_doublet_SCT.rds'))
+
+cell_types <- data.frame(first_cell_type=my_RCTD_doublet[["EuE-31-164"]]@results[["results_df"]][["first_type"]], sec_cell_type= my_RCTD_doublet[["EuE-31-164"]]@results[["results_df"]][["second_type"]] )
+ggplot(cell_types, aes(x=first_cell_type)) + geom_bar() + scale_y_log10()
+ggplot(cell_types, aes(x=sec_cell_type)) + geom_bar() + scale_y_log10()
+```
+
+Present RCTD results
+```{r}
+df_RCTD <- ldply(datasets, .fun = function(dataset) { format.rctd.output_(my_RCTD[[dataset]]) })
+g <- plot.population.fractions.across.samples(df_RCTD, sample.col = ".id")
+#colSide <- as.vector(unlist(color_list[unlist(dataset.labels[unique(df_RCTD$.id)])]))
+#g <- g+scale_fill_manual(values=colSide)
+png(paste0(plots_dir, "/", analysis_file_prefix, "population-distributions.png"), width = 2 * 480, height = 1  * 480)
+print(g)
+d <- dev.off()
+
+Moran_values<-data.frame()
+for (i in  levels(my_RCTD[[1]]@reference@cell_types)){
+RCTD.plots <-
+  llply(datasets,
+        .fun = function(dataset) {
+          barcodes <- colnames(my_RCTD[[dataset]]@spatialRNA@counts)
+          weights <- my_RCTD[[dataset]]@results$weights
+          norm_weights <- normalize_weights(weights)
+
+          g <- plot_puck_continuous(my_RCTD[[dataset]]@spatialRNA, barcodes, norm_weights[,i], ylimit = c(0,max(norm_weights[,i])), title =paste0(dataset)) + scale_y_reverse()
+          g
+        })
+
+g.all <- plot_grid(plotlist = RCTD.plots)
+g.all <- add.title.to.plot(g.all, paste0('plot of ',i, ' weights'))
+png(paste0(plots_dir, "/", analysis_file_prefix, "deconvolution_weights ",i,"_SCT.png"),width = 800, height = 600)
+print(g.all)
+d <- dev.off()
+
+Moran.plot <-
+  llply(datasets,
+        .fun = function(dataset) {
+          barcodes <- colnames(my_RCTD[[dataset]]@spatialRNA@counts)
+          weights <- my_RCTD[[dataset]]@results$weights
+          norm_weights <- normalize_weights(weights)
+          
+          x<-my_RCTD[[dataset]]@spatialRNA@coords[["x"]]
+          y<-my_RCTD[[dataset]]@spatialRNA@coords[["y"]]
+          coords<-cbind(x,y)
+          nb <- knn2nb(knearneigh(coords, k=1))
+          lw <- nb2listw(nb, style="W", zero.policy=TRUE)
+          M1 <- moran.mc(as.numeric(norm_weights[,i]), lw, nsim=9999, alternative="greater")
+          M1
+        })
+
+    png(paste0(plots_dir, "/", analysis_file_prefix, "Moran's I score ",i,".png"),width = 800, height = 600)
+    par(mfrow=c(2,2))
+    m_val<-nrow(Moran_values) + 1
+    for( j in names(Moran.plot)){
+      Moran_values[m_val,match(j,names(Moran.plot))] = unname(unlist(Moran.plot[[j]]$statistic))
+      plot(Moran.plot[[j]], main=paste0(j, ' Moran I test ',Moran.plot[[j]][["statistic"]], 'pval ', Moran.plot[[j]][["p.value"]]))
+    }
+    d <- dev.off()
+}
+rownames(Moran_values)<-levels(my_RCTD[["EuE-31-164"]]@reference@cell_types)
+colnames(Moran_values)<-datasets
+
+png(paste0(plots_dir,"Moran_value_heatmap.png"),width=980, height=980)
+colSide <- as.vector(unlist(color_list[unlist(dataset.labels[names(Moran.plot)])]))
+heatmap.2(as.matrix(Moran_values),ylab="Cell type", xlab="Sample",ColSideColors = colSide ,col =rev( colorRampPalette(brewer.pal(8, "RdBu"))(25)), breaks=c(seq(-1,0.1,length=13),seq(0.1111,1,length=13)), symm=F,symkey=F,symbreaks=T, scale="none", margins=c(12,9),trace="none",lhei=c(1, 6),keysize=3,key.title="Moran Value") 
+
+d <- dev.off()
+#ggplot() + geom_scatterpie(aes(x=my_RCTD[["EuE-31-164"]]@spatialRNA@coords[["x"]], #y=my_RCTD[["EuE-31-164"]]@spatialRNA@coords[["y"]], group=region), data=d, cols=) + coord_equal()
+```
+
+
+
+Gene Ontology and KEGG anaylsis
+```{r}
+
+assay_var="Spatial"
+genes_ff<-data.frame()
+for(i in frozen.datasets){
+  genes_ff[1:length(filtered.objs[[i]]@assays[[assay_var]]@counts@Dimnames[[1]]),i]<-(rowSums(filtered.objs[[i]]@assays[[assay_var]]@counts))
+  genes_ff[,i]<-genes_ff[,i]/sum(genes_ff[,i])
+}
+rownames(genes_ff)<-filtered.objs[[i]]@assays[[assay_var]]@counts@Dimnames[[1]]
+
+genes_ffpe<-data.frame()
+for(i in ffpe.datasets){
+  genes_ffpe[1:length(filtered.objs[[i]]@assays[[assay_var]]@counts@Dimnames[[1]]),i]<-(rowSums(filtered.objs[[i]]@assays[[assay_var]]@counts))
+  genes_ffpe[,i]<-genes_ffpe[,i]/sum(genes_ffpe[,i])
+}
+rownames(genes_ffpe)<-filtered.objs[[i]]@assays[[assay_var]]@counts@Dimnames[[1]]
+
+genes_ff$mean <- rowMeans(genes_ff[,frozen.datasets], na.rm=TRUE)
+genes_all<-genes_ff
+genes_all[match(rownames(genes_ffpe),rownames(genes_ff)),4]<-rowMeans(genes_ffpe[,ffpe.datasets], na.rm=TRUE)
+genes_all<-genes_all[,-1:-2]
+colnames(genes_all)<-c("Norm. Sum of UMIs in all tissue FF spots","Norm. Sum of UMIs in all tissue FFPE spots")
+Exist_in_FFPE<-is.na(genes_all$`Norm. Sum of UMIs in all tissue FFPE spots`)
+genes_all$`Norm. Sum of UMIs in all tissue FFPE spots`[Exist_in_FFPE] <- 0
+
+g <- ggplot(genes_all, aes(`Norm. Sum of UMIs in all tissue FF spots`, `Norm. Sum of UMIs in all tissue FFPE spots`)) + scale_y_log10() +scale_x_log10() +geom_point(alpha = 0.5, aes(color=Exist_in_FFPE)) + coord_fixed() 
+g <- g + ggtitle("UMIs in FF vs FFPE ") 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+png(paste0(plots_dir, "/", analysis_file_prefix, "FF vs FFPE UMIs_exist_in_FFPE.png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+
+png(paste0(plots_dir, "/", analysis_file_prefix, "FF vs FFPE UMIs_hex.png"),width = 480, height = 480)
+g <- ggplot(genes_all, aes(`Norm. Sum of UMIs in all tissue FF spots`, `Norm. Sum of UMIs in all tissue FFPE spots`)) + scale_y_log10() +scale_x_log10() 
+g <- g + ggtitle("UMIs in FF vs FFPE ") 
+#g + geom_hex(binwidth = c(.0001, 50))
+g <- g +geom_hex(bins = 50)
+g<- g+ geom_abline(intercept = 0, slope = 1, linetype = "dashed", size = 0.75, colour='#ff0000')
+print(g)
+d <- dev.off()
+
+genes_FF_o<-genes_all$`Norm. Sum of UMIs in all tissue FF spots`>=1e-08& genes_all$`Norm. Sum of UMIs in all tissue FFPE spots`<=1e-08
+
+g <- ggplot(genes_all, aes(`Norm. Sum of UMIs in all tissue FF spots`, `Norm. Sum of UMIs in all tissue FFPE spots`)) + scale_y_log10() +scale_x_log10() +geom_point(alpha = 0.5, aes(color=genes_FF_o)) + coord_fixed() 
+g <- g + ggtitle("UMIs in FF vs FFPE ") 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+png(paste0(plots_dir, "/", analysis_file_prefix, "FF vs FFPE UMIs_FF_o.png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+
+genes_FF_o<-rownames(genes_all)[genes_FF_o]
+
+genes_FFPE_o<-genes_all$`Norm. Sum of UMIs in all tissue FFPE spots`>=1e-08& genes_all$`Norm. Sum of UMIs in all tissue FF spots`<=1e-08
+
+g <- ggplot(genes_all, aes(`Norm. Sum of UMIs in all tissue FF spots`, `Norm. Sum of UMIs in all tissue FFPE spots`)) + scale_y_log10() +scale_x_log10() +geom_point(alpha = 0.5, aes(color=genes_FFPE_o)) + coord_fixed() 
+g <- g + ggtitle("UMIs in FF vs FFPE ") 
+g <- g + theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+png(paste0(plots_dir, "/", analysis_file_prefix, "FF vs FFPE UMIs_FFPE_o.png"),width = 480, height = 480)
+print(g)
+d <- dev.off()
+
+genes_FFPE_o<-rownames(genes_all)[genes_FFPE_o]
+
+GO.KEGG.enirhcment.analysis(genes_FFPE_o,"FFPE")
+GO.KEGG.enirhcment.analysis(genes_FF_o,"FF")
+
+
+
+de_genes_FFPE <- FindMarkers(all.filtered.objs, assay="Spatial", ident.1 = ffpe.datasets, ident.2 = frozen.datasets)
+saveRDS(de_genes_FFPE,file.path(base_dir,'de_genes_FFPE.rds'))
+
+de_genes_FF <- FindMarkers(all.filtered.objs, ident.1 = frozen.datasets, ident.2 = ffpe.datasets)
+saveRDS(de_genes_FFPE,file.path(base_dir,'de_genes_FF.rds'))
+
+
+```
+
+
+

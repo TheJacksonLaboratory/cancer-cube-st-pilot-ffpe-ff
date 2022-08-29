@@ -246,6 +246,8 @@ condense.biotypes <- function(df, biotype.col = "gene_biotype") {
   df[flag, biotype.col] <- "IG"
   flag <- grepl(df[, biotype.col], pattern="TR_")
   df[flag, biotype.col] <- "TR"
+  flag <- grepl(df[, biotype.col], pattern="pseudogene")
+  df[flag, biotype.col] <- "pseudogene"
   df
 }
 
@@ -421,13 +423,13 @@ add.metadata.to.seurat.obj <- function(obj, metadata.df) {
   # stopifnot(rows %in% rownames(metadata.df))
   # metadata.df <- metadata.df[rows,]
   colnames(metadata.df) <- make.names(colnames(metadata.df))
-  metadata.df <- metadata.df[, !(colnames(metadata.df) %in% colnames(obj[[]]))]
+  metadata.df <- metadata.df[, !(colnames(metadata.df) %in% colnames(obj[[]])), drop=FALSE]
   cols.to.add <- colnames(metadata.df)
   all.meta <- merge(obj[[]], metadata.df, by = "row.names", all.x = TRUE)
   rownames(all.meta) <- all.meta$Row.names
   ids <- Cells(obj)
   all.meta <- all.meta[ids,]
-  obj <- AddMetaData(obj, all.meta[, cols.to.add])
+  obj <- AddMetaData(obj, all.meta[, cols.to.add, drop=FALSE])
   obj
 }
 
@@ -538,25 +540,40 @@ get.annotationhub.biotypes <- function(gene_set){
 #'  N: The number of intergenic reads in the spot
 #'  tot.mapped.reads: The number of mapped reads in the spot
 #'  tot.unmapped.reads: The number of unmapped reads in the spot
-#'  total.reads: tot.mapped.reads + tot.unmapped.reas
+#'  tot.reads: tot.mapped.reads + tot.unmapped.reas
 #'  E.frac.mapped: E / tot.mapped.reads
 #'  I.frac.mapped: I / tot.mapped.reads
 #'  N.frac.mapped: N / tot.mapped.reads
 get.per.spot.alignment.metrics <- function(bam.file) {
+  # The following tries to efficiently parse the bam by chromosome,
+  # but this doesn't appear to work for FFPE/targeted sequencing.
+  # For some reason, the rname/chromosome is NA for the vast majority (~98%)
+  # of reads. Probably they are mapped to probe contigs/"chromosomes", which
+  # aren't reflected in the rname.
+  if(FALSE) {
   # Get the chromosome names
   ret <- scanBamHeader(c(bam.file))
-  sq.indices <- names(ret[[1]]$text) == "@SQ"
-  seqnames <- as.vector(unlist(lapply(ret[[1]]$text[sq.indices], function(x) gsub(x[1], pattern="SN:", replacement=""))))
-  
+  # The two elements returned by scanBamHeader are targets and text.
+  # According to the Rsamtools docs:
+  # The targets element contains target (reference) sequence lengths. The text element is
+  # itself a list with each element a list corresponding to tags (e.g., ‘@SQ’) found in the header, and the
+  # associated tag values.
+  #sq.indices <- names(ret[[1]]$text) == "@SQ"
+  #seqnames <- as.vector(unlist(lapply(ret[[1]]$text[sq.indices], function(x) gsub(x[1], pattern="SN:", replacement=""))))
+  seq.lengths <- as.vector(ret[[1]]$targets)
+  names(seq.lengths) <- names(ret[[1]]$targets)
+  seq.names <- names(seq.lengths)
+  names(seq.names) <- seq.names
+
   # For computational/memory efficiency, iterate over the chromosomes as opposed
   # to processing the entire file
-  names(seqnames) <- seqnames
-  res <- ldply(seqnames, .parallel = TRUE,
+  res <- ldply(seq.names, .parallel = FALSE,
                .fun = function(seqname) {
+                 print(seqname)
                  # CB: error-corrected spot barcode
                  # UB: error-corrected molecular barcode
                  # RE: E = exonic, N = intronic, I = intergenic
-                 param <- ScanBamParam(tag=c('CB','RE'), which=GRanges(seqname, IRanges(1, 1e7)), flag=scanBamFlag(isUnmappedQuery=FALSE))
+                 param <- ScanBamParam(tag=c('CB','RE'), which=GRanges(seqname, IRanges(1, seq.lengths[[seqname]])), flag=scanBamFlag(isUnmappedQuery=FALSE))
                  x <- scanBam(bam.file, param=param)[[1]]
                  if(is.null(x$tag$CB)) { return(NULL) }
                  if(is.null(x$tag$RE)) { return(NULL) }
@@ -572,6 +589,22 @@ get.per.spot.alignment.metrics <- function(bam.file) {
                        })
                })
   
+  } # end if(FALSE)
+  param <- ScanBamParam(tag=c('CB','RE'), flag=scanBamFlag(isUnmappedQuery=FALSE))
+  x <- scanBam(bam.file, param=param)[[1]]
+  df <- as.data.frame(x$tag)
+  # Combine counts within spot (for this chromosome)
+  res <- ddply(df, .variables = c("CB"),
+               .fun = function(df.cb) {
+                 if(nrow(df.cb) == 0) { return(NULL) }
+                 data.frame(E = length(which(!is.na(df.cb$RE) & (df.cb$RE == "E"))),
+                            I = length(which(!is.na(df.cb$RE) & (df.cb$RE == "I"))),
+                            N = length(which(!is.na(df.cb$RE) & (df.cb$RE == "N"))),
+                            tot.mapped.reads = nrow(df.cb))
+               })
+
+  # Combine results for a spot (CB) across chromosomes
+  spot.res <- ddply(res, .variables=c("CB"), .fun = function(df) data.frame(E = sum(df$E), I = sum(df$I), N = sum(df$N), tot.mapped.reads = sum(df$tot.mapped.reads)))
   
   # See description of _cell_ranger filtering here:
   # https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/algorithms/overview
@@ -581,12 +614,9 @@ get.per.spot.alignment.metrics <- function(bam.file) {
   unmr.tbl <- as.data.frame(table(na.omit(unmr$tag$CB)))
   colnames(unmr.tbl) <- c("CB", "tot.unmapped.reads")
   
-  # Combine results for a spot (CB) across chromosomes
-  spot.res <- ddply(res, .variables=c("CB"), .fun = function(df) data.frame(E = sum(df$E), I = sum(df$I), N = sum(df$N), tot.mapped.reads = sum(df$tot.mapped.reads)))
-  
   spot.res <- merge(spot.res, unmr.tbl, all.x=TRUE)
   #spot.res <- spot.res[!is.na(spot.res$CB),]
-  spot.res$total.reads <- spot.res$tot.mapped.reads + spot.res$tot.unmapped.reads
+  spot.res$tot.reads <- spot.res$tot.mapped.reads + spot.res$tot.unmapped.reads
   spot.res$E.frac.mapped <- spot.res$E / spot.res$tot.mapped.reads
   spot.res$I.frac.mapped <- spot.res$I / spot.res$tot.mapped.reads
   spot.res$N.frac.mapped <- spot.res$N / spot.res$tot.mapped.reads
@@ -606,32 +636,40 @@ get.per.spot.alignment.metrics <- function(bam.file) {
 #' @param mol.info.file A string providing the path to "molecule_info.h5" file
 #' @return A data.frame in which each row corresponds to a spot.
 #'  It has rownames corresponding to the barcode of the spot and columns:
-#'  CThe sequence of the barcode associated to the spot.
-#'  E: The number of exonic reads in the spot
-#'  I: The number of intronic reads in the spot
-#'  N: The number of intergenic reads in the spot
-#'  tot.mapped.reads: The number of mapped reads in the spot
-#'  tot.unmapped.reads: The number of unmapped reads in the spot
-#'  total.reads: tot.mapped.reads + tot.unmapped.reas
-#'  E.frac.mapped: E / tot.mapped.reads
-#'  I.frac.mapped: I / tot.mapped.reads
-#'  N.frac.mapped: N / tot.mapped.reads
-get.per.spot.saturation.stats <- function(mol.info.file) {
+#'  num.reads: total number of reads to barcode
+#'  num.umis: number of unique reads (UMIs) to barcode
+#'  num.nonzero.genes: number of genes to barcode with one or more reads
+#'  saturation: (num.reads - num.unis) / num.reads
+get.per.spot.saturation.stats <- function(mol.info.file, filter = TRUE) {
   # Get the barcode and count of each UMI (ignoring the feature/gene)
   df <- data.frame(barcode = h5read(mol.info.file, "/barcodes")[h5read(mol.info.file, "/barcode_idx")+1], 
-                   count = h5read(mol.info.file, "/count"))
+                   count = h5read(mol.info.file, "/count"),
+                   feature.idx = h5read(mol.info.file, "/feature_idx"))
   # This is how you would extract the associated gene
   # gene <- h5read(mol.info.file, "/features/name")[h5read(mol.info.file, "/feature_idx")+1]
   # This should tell us whether the read mapped to an intron or exon, but I only see exonic reads
   # umi.type <- h5read(mol.info.file, "/umi_type")
   
+  ls.info <- h5ls(mol.info.file)
+  probe.set.key.flag <- grepl(ls.info$name, pattern="Probe Set")
+  probe.set <- NULL
+  if(length(which(probe.set.key.flag)) == 1) {
+    probe.set <- h5read(mol.info.file, paste0(ls.info[probe.set.key.flag,"group"], "/", ls.info[probe.set.key.flag,"name"]))
+  }
   res <- ddply(df, 
                .variables = c("barcode"), 
                .fun = function(tbl) {
-                 tot.reads <- sum(tbl$count)
-                 umis <- nrow(tbl)
-                 saturation <- (tot.reads - umis) / tot.reads
-                 data.frame(tot.reads = tot.reads, tot.umis = umis, saturation = saturation)
+                 # As stated here:
+                 # https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/matrices
+                 # non-targeted genes are removed from the 'filtered' (but not the 'unfiltered') matrix
+                 if(filter && !is.null(probe.set)) {
+                   tbl <- subset(tbl, feature.idx %in% probe.set)
+                 }
+                 num.reads <- sum(tbl$count)
+                 num.umis <- nrow(tbl)
+                 num.nonzero.genes <- length(unique(tbl$feature.idx[tbl$count > 0]))
+                 saturation <- (num.reads - num.umis) / num.reads
+                 data.frame(num.reads = num.reads, num.umis = num.umis, num.nonzero.genes = num.nonzero.genes, saturation = saturation)
                 })
   rownames(res) <- res$barcode
   res <- res[, !(colnames(res) == "barcode")]
@@ -674,4 +712,42 @@ get.visium.spot.distance.separation <- function(obj) {
   tbl <- table(tmp$diff)
   dy <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
   return(c(dx, dy))
+}
+
+#' Return the genes targeted by sequencing.
+#' 
+#' For fresh frozen, this will be all genes (in the Seurat object's expression matrix).
+#' For FFPE, this will be those in the probe set.
+#' 
+#' @param mol.info.file A string providing the path to "molecule_info.h5" file
+#' @return A list with named entries:
+#'           gene.targets: A vector of gene names
+#'           gene.off.targets: A vector of gene names
+#'           gene.id.targets: A vector of gene ids
+#'           gene.id.off.targets: A vector of gene ids
+get.targeted.genes <- function(mol.info.file) {
+  gene.ensg.ids <- h5read(mol.info.file, "/features/id")
+  gene.names <- h5read(mol.info.file, '/features/name')
+  
+  ls.info <- h5ls(mol.info.file)
+  probe.set.key.flag <- grepl(ls.info$name, pattern="Probe Set")
+  if(length(which(probe.set.key.flag)) == 0) {
+    # This is not a targeted assay
+    return(list("gene.targets" = gene.names,
+                "gene.off.targets" = NULL,
+                "gene.id.targets" = gene.ensg.ids,
+                "gene.id.off.targets" = NULL))
+  }
+  probe.gene.ids <- h5read(mol.info.file, paste0(ls.info[probe.set.key.flag,"group"], "/", ls.info[probe.set.key.flag,"name"]))
+  gene.indices <- 1:length(gene.ensg.ids)
+  nonprobe.gene.indices <- gene.indices[!(gene.indices %in% probe.gene.ids)]
+  probe.gene.indices <- gene.indices[(gene.indices %in% probe.gene.ids)]
+  nonprobe.gene.names <- sort(gene.names[nonprobe.gene.indices])
+  probe.gene.names <- gene.names[probe.gene.indices]
+  nonprobe.gene.ids <- gene.ensg.ids[nonprobe.gene.indices]
+  probe.gene.ids <- gene.ensg.ids[probe.gene.indices]
+  list("gene.targets" = probe.gene.names,
+       "gene.off.targets" = nonprobe.gene.names,
+       "gene.id.targets" = probe.gene.ids,
+       "gene.id.off.targets" = nonprobe.gene.ids)
 }

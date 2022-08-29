@@ -23,17 +23,15 @@ plot.hne <- function(obj, keep.invisible.legend = FALSE) {
   g <- SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0))
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15))
   if(keep.invisible.legend) {
-    g <- g + theme(legend.position = "bottom") 
-    g <- g + theme(legend.title = element_text(color = "transparent"), legend.text = element_text(color = "transparent"))
-    # g <- g + scale_fill_continuous(fill = guide_legend(override.aes = list(alpha = 1)))
-    # g <- g + scale_fill_gradientn(colors = brewer.pal(10,"Spectral"), guide = guide_legend(override.aes = list(alpha = 1)))
-    # g <- g + guides(fill = guide_legend(override.aes = list(alpha = 1)))
-    # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
-    # for the following code, which suppresses 
-    # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
-    i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
-    g$scales$scales[[i]] <- NULL
-    g <- g + scale_fill_gradientn(colours = c("white"))
+    g <- g + theme(legend.position = "right") 
+    ## g <- g + theme(legend.title = element_text(color = "transparent"), legend.text = element_text(color = "transparent"))
+    ### See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
+    ### for the following code, which suppresses 
+    ### "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
+    ##i <- which(sapply(g$scales$scales, function(x) 'fill' %in% x$aesthetics))
+    ##g$scales$scales[[i]] <- NULL
+    ##g <- g + scale_fill_gradientn(colours = c("white"))
+    g <- plot_grid(g + theme(legend.position = "none"), NULL, nrow = 1, rel_widths = c(7,3))
   } else {
     g <- g + theme(legend.position = "none")
   }
@@ -101,16 +99,17 @@ plot.population.weights <- function(rctd, pop.weights, populations, obj = NULL, 
 #' @param pop.weights A data frame whose rows are spots, whose columns are deconvolved populations, and whose 
 #'                    entries are the (predicted) fraction of a population in a given spot.
 #'                    data.frames for each sample can be created by format.rctd.output_.
+#' @param id.col The column(s) within pop.weights _other_ than the populations.
 #' @param sample.col The column within pop.weights that gives the name of the sample.
 #'                   If null, pop.weights is considered to describe only one sample.
 #' @return a ggplot
-plot.population.fractions.across.samples <- function(pop.weights, sample.col = NULL) {
+plot.population.fractions.across.samples <- function(pop.weights, id.cols, sample.col = NULL, ...) {
   num.samples <- 1
   if(!is.null(sample.col) && (length(unique(pop.weights[, sample.col])) > 1)) {
-    df <- reshape2::melt(pop.weights, id.vars = sample.col)
-    colnames(df) <- c(sample.col, "variable", "value")
+    df <- reshape2::melt(pop.weights, id.vars = id.cols)
+    colnames(df) <- c(id.cols, "variable", "value")
     df <- subset(df, !(variable %in% c("x","y")))
-    g <- ggplot(data = df, aes_string(x = sample.col, y = "value"))
+    g <- ggplot(data = df, aes_string(x = sample.col, y = "value", ...))
     #g <- g+scale_fill_manual(values=colSide)
     g <- g + facet_wrap(as.formula(paste("~", "variable")), scales = "free_y")
     g <- g + xlab("Sample")
@@ -118,15 +117,15 @@ plot.population.fractions.across.samples <- function(pop.weights, sample.col = N
     df <- reshape2::melt(pop.weights)
     colnames(df) <- c("variable", "value")
     df <- subset(df, !(variable %in% c("x","y")))
-    g <- ggplot(data = df, aes(x = variable, y = value))
+    g <- ggplot(data = df, aes(x = variable, y = value, ...))
     g <- g + xlab("Population")
   }
   g <- g + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
   # beeswarm takes a long time
   # g <- g + geom_beeswarm()
-  # g <- g + geom_boxplot()
-  g <- g + geom_violin(trim=FALSE)
-  g <- g +scale_fill_brewer(palette="Dark2")
+  g <- g + geom_boxplot()
+  # g <- g + geom_violin(trim=FALSE)
+  #g <- g +scale_fill_brewer(palette="Dark2")
   #g +scale_fill_manual(values=c("#d8b365", "#d8b365", "#5ab4ac", "#5ab4ac"))
   g <- g + ylab("Population Fraction")
   g
@@ -166,7 +165,7 @@ plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial",
 plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE) {
   g <- SpatialFeaturePlot(obj, features = features)
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
-  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom")
+  g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "right")
   # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
   # for the following code, which suppresses 
   # "Scale for 'fill' is already present. Adding another scale for 'fill', which will replace the existing scale."
@@ -178,7 +177,11 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
   } else {
     g <- g + scale_fill_gradientn(name = legend.name, colours = Seurat:::SpatialColors(n = 100))
   }
-  g
+  # g <- g + theme(legend.text = element_text(angle = 45, vjust = 1, hjust=1))
+  g <- g + theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+  g.leg <- get_legend(g) # + theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+  plot_grid(g + theme(legend.position = "none"), g.leg, nrow = 1, rel_widths = c(7,3))
+  # g
 }
 
 #' Create a spatial feature plot
@@ -201,7 +204,7 @@ plot.features <- function(obj, features, feature.names = NULL, include.hne = FAL
     plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), legend.name = feature.names[i], rescale.legend = FALSE))
   }
   if(include.feature.cnts) {
-    p <- plot.spatial(obj, "nFeature_Spatial", "# Features (K)", rescale.legend = TRUE)
+    p <- plot.spatial(obj, "nFeature_Spatial", "# Genes (K)", rescale.legend = TRUE)
     plts <- c(list(p), plts)
   }
   if(include.umi.cnts) {
@@ -310,7 +313,7 @@ plot.feature.across.samples <- function(objs, titles, feature = "nCount_Spatial"
   g.all
 }
 
-plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, add.housekeeping = TRUE) {
+plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, add.housekeeping = TRUE, probs = seq(0.5, 1, by=0.1), ...) {
   raw.cnt.mat <- GetAssayData(obj, assay = "Spatial", slot = "counts")
   expr.mat <- cpm(raw.cnt.mat, log = TRUE)
   nz.genes <- rowSums(raw.cnt.mat) > 0
@@ -319,7 +322,8 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, 
   
   # Add housekeeping genes
   if(add.housekeeping) {
-    genes <- unique(c(genes, "ACTB", "GAPDH"))
+    # genes <- unique(c(genes, "ACTB", "GAPDH"))
+    genes <- unique(c(genes, "ACTB"))
   }
   
   # qs <- calculate.expression.quantiles(raw.cnt.mat, summary.func = median)
@@ -328,7 +332,7 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, 
   # Calculate the quantiles and the genes closest to those quantiles
   gene.summaries <- apply(expr.mat, 1, mean)
   # Let's only plot those above the 50% percentile
-  qs <- quantile(gene.summaries, probs = seq(0.5, 1, by=0.1))
+  qs <- quantile(gene.summaries, probs = probs)
   qs.names <- unlist(llply(qs, .fun = function(val) names(which.min((gene.summaries-val)^2))[1]))
   qs.names <- as.data.frame(qs.names)
   colnames(qs.names)[1] <- "gene"
@@ -338,7 +342,8 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, 
   mat <- raw.cnt.mat
   genes <- genes[genes %in% rownames(mat)]
   genes <- names(sort(gene.summaries[genes]))
-  qs.names <- subset(qs.names, !(gene %in% genes))
+  #qs.names <- subset(qs.names, !(gene %in% genes))
+  genes <- genes[!(genes %in% qs.names$gene)]
   labels <- genes
   genes <- c(genes, qs.names$gene)
   labels <- c(labels, qs.names$label)
@@ -358,7 +363,7 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, 
   colnames(gene.df) <- c("gene", "sample", "expr")
   title <- paste0(obj[[]]$orig.ident[1], " (", ncol(mat), " spots)")
   # g1 <- ggplot(data = gene.df, aes(x = expr, y = gene)) + geom_boxplot()
-  g1 <- ggplot(data = gene.df, aes(x = expr)) + geom_bar() + facet_wrap(~ gene, scale = "free", labeller = as_labeller(labels))
+  g1 <- ggplot(data = gene.df, aes(x = expr)) + geom_bar() + facet_wrap(~ gene, scale = "free", labeller = as_labeller(labels), ...)
   g1 <- g1 + ylab("Frequency") + xlab("Gene Read Count (Quantiles in Parentheses)")
   g1 <- g1 + ggtitle(title)
   g1
@@ -369,14 +374,14 @@ plot.gene.expression.distribution.relative.to.quantiles <- function(obj, genes, 
 #'  
 #' @param objs A named list of Seurat 10X spatial objects, each representing a sample.
 #' @return A ggplot
-plot.biotypes.across.samples <- function(objs, species = "human") {
+plot.biotypes.across.samples <- function(objs, species = "human", sample.labels = NULL) {
   if (species == 'human'){
     gene_db = useMart("ensembl",dataset="hsapiens_gene_ensembl")
   } else {
     gene_db = useMart("ensembl", dataset = "mmusculus_gene_ensembl")
   }
   frac.df <-
-    ldply(objs,
+    ldply(objs, .parallel = FALSE,
           .fun = function(obj) {
             mat <- GetAssayData(obj, assay="Spatial", slot="counts")
             df <- as.data.frame(mat)
@@ -396,9 +401,11 @@ plot.biotypes.across.samples <- function(objs, species = "human") {
           })
   colnames(frac.df)[1] <- "sample"
 
+  frac.df[is.na(frac.df)] <- 0
   numeric.cols <- colnames(frac.df)[!(colnames(frac.df) %in% c("sample", "gene_biotype"))]
-  frac.sums <- colSums(frac.df[, numeric.cols])
+  frac.sums <- colSums(frac.df[, numeric.cols], na.rm=TRUE)
   frac.sums <- frac.sums[order(frac.sums, decreasing=TRUE)]
+  print(frac.sums)
   max.biotypes.to.display <- 5
   other.biotypes <- names(frac.sums)[(max.biotypes.to.display+1):length(frac.sums)]
   fracs <- cbind(frac.df, other = rowSums(frac.df[, other.biotypes]))
@@ -408,7 +415,17 @@ plot.biotypes.across.samples <- function(objs, species = "human") {
   colnames(foo) <- c("sample", "biotype", "proportion")
   foo$proportion <- foo$proportion * 100
   foo$biotype <- factor(foo$biotype, biotype.cols)
-  g <- ggplot(data = foo, aes(x = biotype, y = proportion)) + geom_boxplot() + facet_wrap(~ sample, nrow=2)
+  if(!is.null(sample.labels)) {
+    sample.df <- data.frame(sample = names(sample.labels), label = as.character(sample.labels))
+    foo <- merge(foo, sample.df)
+    foo$sample <- factor(foo$sample)
+  }
+  g <- ggplot(data = foo, aes(x = biotype, y = proportion)) + geom_boxplot()
+  if(is.null(sample.labels)) {
+    g <- g + facet_wrap(~ sample, nrow=2)
+  } else {
+    g <- g + facet_wrap(label ~ sample)
+  }
   g <- g + theme(text = element_text(size = 20), axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
   g <- g + xlab("Biotype") + ylab("Proportion")
   g

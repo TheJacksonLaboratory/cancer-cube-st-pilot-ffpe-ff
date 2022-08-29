@@ -44,6 +44,7 @@ suppressPackageStartupMessages(p_load(ggVennDiagram))
 suppressPackageStartupMessages(p_load(gridExtra))
 suppressPackageStartupMessages(p_load(openxlsx))
 suppressPackageStartupMessages(p_load(data.table))
+suppressPackageStartupMessages(p_load(biomaRt))
 library("gplots")
 library(RColorBrewer)
 library(harmony)
@@ -54,6 +55,7 @@ library(harmony)
 library(spots)
 
 suppressPackageStartupMessages(p_load(KRLS)) # for gausskernel
+suppressPackageStartupMessages(p_load(devtools))
 ```
 
 
@@ -70,6 +72,8 @@ if(!is.na(num.cores) && (num.cores > 1)) {
 ```
 
 ```{r}
+url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/r_hne_image_utils/main/hovernet-utils.R"
+source_url(url) # for extract.cell.info.from.hovernet.output, extract.hovernet.cell.info
 source("utils.R")
 source("plotting-utils.R")
 ```
@@ -91,7 +95,7 @@ patient.df$sample <- rownames(patient.df)
 
 samples.by.patient <- dlply(patient.df, .variables = c("patient"), .fun = function(df) df$sample)
 
-base_dir <- '/projects/compsci/whitebr/tnbc/'
+base_dir <- '/projects/compsci/jgeorge/whitebr/tnbc/'
 
 ```
 
@@ -114,9 +118,46 @@ dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
 analysis_file_prefix <- paste0("tnbc-")
 ```
 
+
+
+```{r}
+json.path = "/projects/compsci/jgeorge/whitebr/tnbc/hov/SC2200259_9990/json/SC2200259-pyramid-fake.json"
+json.type.info.path <- "/projects/chuang-lab/USERS/whitebr/hover_net/type_info.json"
+tbl <- extract.cell.info.from.hovernet.output(json.path)[["df"]]
+cell.info.tbl <- extract.hovernet.cell.info(json.type.info.path)
+stbl <- merge(tbl, cell.info.tbl, by.x="type", by.y="id")
+```
+
+
+```{r}
+suppressPackageStartupMessages(p_load(reticulate))
+get.wsi.dimensions <- function(wsi.file) {
+  openslide <- import("openslide")
+  slide <- openslide$OpenSlide(wsi.file)
+  dims <- unlist(slide$dimensions)
+  return(dims)
+}
+```
+
+```{r}
+# get.wsi.dimensions("/projects/compsci/jgeorge/whitebr/tnbc/SC2200259_9990/img/SC2200259.tiff")
+# get.wsi.dimensions("/projects/compsci/jgeorge/whitebr/tnbc/SC2200259_9990/img/hov/SC2200259-pyramid-fake.svs")
+```
+
+
+```{r}
+# Map the centroids to spot row/columns
+```
+
+
+```{r}
+# plot.features(filtered.objs[["SC2200259_9990"]], features=c("PTPRC"), include.hne=TRUE)
+```
+
+
 ```{r}
 # Directory holding the scRNA-seq data to be used for deconvolution
-scrnaseq_dir <- paste0("/projects/compsci/whitebr/tnbc/external/wu-emboj/")
+scrnaseq_dir <- paste0("/projects/compsci/jgeorge/whitebr/tnbc/external/wu-emboj/")
 scrnaseq_cnt_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_count_matrix_sparse.mtx")
 scrnaseq_gene_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_genes.tsv")
 scrnaseq_barcode_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_barcodes.tsv")
@@ -145,6 +186,18 @@ tnbc.cell.types <- tnbc.cell.types[colnames(tnbc.cnts)]
 filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
 unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
 ```
+
+```{r}
+# Plot reads per spot (across samples)
+cnt.tbl <- ldply(filtered.objs, .fun = function(obj) obj[[]][, c("nCount_Spatial"), drop=FALSE])
+colnames(cnt.tbl)[1] <- "sample"
+breaks <- 2^seq(from=log2(32), to=log2(131072), by=2)
+g <- ggplot(data = cnt.tbl, aes(x = sample, y = nCount_Spatial)) + ylab("nUMIs") + geom_violin() + scale_y_continuous(trans='log2', breaks=breaks) + theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1), text = element_text(size = 20))
+png(paste0(plots_dir,"nUMIs-vs-sample.png"),height=1*480, width=2*480)
+print(g)
+d <- dev.off()
+```
+
 
 ```{r}
 # Run RCTD spot deconvolution
@@ -185,6 +238,7 @@ format.rctd.output <- function(rctd) {
   df <- format.rctd.output_(rctd, normalize = FALSE)
   df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
   df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
+  df$Immune <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells", "B_Cells", "NK cells", "NKT cells", "Plasma_Cells")], 1, function(row) sum(row))
   df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
   cell.types <- c("dPVL", "imPVL")
   df$PVL <- apply(df[, cell.types], 1, function(row) sum(row))
@@ -281,11 +335,310 @@ filtered.objs <-
           obj
         })
 ```
+
 ```{r}
-g <- plot.biotypes.across.samples(filtered.objs)
-png(paste0(plots_dir,"read-proportion-biotype-vs-sample.png"),height=2*480)
+if(FALSE) {
+  g <- plot.biotypes.across.samples(filtered.objs)
+  png(paste0(plots_dir,"read-proportion-biotype-vs-sample.png"),height=1*480, width=2*480)
+  print(g)
+  d <- dev.off()
+}
+```
+
+```{r}
+deltas = get.visium.spot.distance.separation(filtered.objs[["SC2200259_9990"]])
+dx <- deltas[1]
+dy <- deltas[2]
+```
+
+```{r}
+scale <- 2
+stbl$col <- unlist(lapply(stbl$centroid.x, function(x) (floor(x * scale / dx ) + 1 - 15)))
+stbl$row <- unlist(lapply(stbl$centroid.y, function(y) (floor(y * scale / dy ) + 1 - 9)))
+all.cell.types <- unique(stbl$label)
+stbl$pos.id <- paste0(stbl$row, "-", stbl$col)
+
+cnt.tbl <- acast(stbl[, c("pos.id", "label")], pos.id ~ label)
+pct.tbl <- t(apply(cnt.tbl, 1, function(row) row / sum(row)))
+cnt.tbl <- cbind(cnt.tbl, total = rowSums(cnt.tbl))
+colnames(pct.tbl) <- paste0(colnames(pct.tbl), ".frac")
+all.tbl <- rbind(reshape2::melt(cnt.tbl), reshape2::melt(pct.tbl))
+colnames(all.tbl) <- c("pos.id", "label", "value")
+mat <- ddply(all.tbl, .variables = c("pos.id"), .fun = function(df) { vec <- df$value; names(vec) <- df$label; vec})
+mat$pos.id <- as.character(mat$pos.id)
+mat$row <- unlist(lapply(mat$pos.id, function(str) as.numeric(strsplit(str, split="-")[[1]][1])))
+mat$col <- unlist(lapply(mat$pos.id, function(str) as.numeric(strsplit(str, split="-")[[1]][2])))
+
+
+```
+
+
+```{r}
+#g <- create.feature.strip.plot(obj, features = c("Epithelial", "Myeloid", "CD14", "CD2", "LY75"), order.by = c("Epithelial", "Myeloid"))
+#g$g
+#g <- create.feature.strip.plot(obj, features = c("Epithelial", "Myeloid", "TLR4", "CD163", "SIGLEC1"), order.by = c("Epithelial", "Myeloid"))
+```
+
+```{r}
+# From Karolina:
+# CD8, CD103 (ITGAE), and CXCL13 (T cells) are essential for treatment response
+# CD8+CD103+ T cells derived from chemokines might orchestrate response to therapy
+# sCD14+ (stromal macrophages): CD14+CD2+LY75+ high macrophages have improved survival relative to low 
+# iCD14+ (intratumoral macrophages): CD14+TLR4+CD163+SIGLEC
+genes <- unique(c("CD8A", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1", "PTPRC", "CD3E", "CD8A", "ITGAE", "CXCL13"))
+for(obj in filtered.objs) {
+  g <- plot.gene.expression.distribution.relative.to.quantiles(obj, genes)
+  sample <- obj[[]]$orig.ident[1]
+  # g <- add.title.to.plot(g, sample)
+  png(paste0(plots_dir, "/", sample, "-myeloid-gene-histograms.png"))
+  print(g)
+  d <- dev.off()
+}
+```
+
+```{r}
+# Output Myeloid cell genes of interest to Karolina
+l_ply(datasets,
+      .fun = function(dataset) {
+        file <- paste0(plots_dir, "/", "myeloid-genes-", dataset, ".png")
+        png(file, width = 2 * 480, height = 1 * 480)
+        # g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = TRUE)
+        # sCD14+ (stromal macrophages): CD14+CD2+LY75+ high macrophages have improved survival relative to low 
+        # iCD14+ (intratumoral macrophages): CD14+TLR4+CD163+SIGLEC
+        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "CD8A", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), feature.names = c("Epithelial Fraction", "CD8 T Fraction", "CD8A", "Myeloid Fraction", "CD14 (monocytes)", "CD2 (sCD14+)", "LY75 (sCD14+)", "TLR4 (iCD14+)", "CD163 (iCD14+)", "SIGLEC1 (iCD14+)"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
+        g <- add.title.to.plot(g, dataset)
+        print(g)
+        d <- dev.off()
+      })
+```
+
+```{r}
+# Output T cell genes of interest to Karolina
+l_ply(datasets,
+      .fun = function(dataset) {
+        file <- paste0(plots_dir, "/", "cd8-t-cell-genes-", dataset, ".png")
+        png(file, width = 2 * 480, height = 1 * 480)
+        # ITGAE = CD103
+        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "PTPRC", "CD3E", "CD8A", "ITGAE", "CXCL13", "Myeloid"), feature.names = c("Epitethial Fraction", "CD8 T Fraction", "CD45 (pan-immune)", "CD3E (T cell)", "CD8A", "CD103", "CXCL13", "Myeloid Fraction"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
+        g <- add.title.to.plot(g, dataset)
+        print(g)
+        d <- dev.off()
+      })
+```
+
+
+```{r}
+# working
+# stop("stop")
+```
+
+```{r}
+sample <- "SC2200259_9990" 
+obj <- filtered.objs[[sample]]
+meta <- obj[[]]
+meta$row.name <- rownames(meta)
+meta <- merge(meta[, c("row.name", "row", "col")], mat, by = c("row", "col"), all.x=TRUE)
+rownames(meta) <- meta$row.name
+meta <- meta[, !(colnames(meta) %in% c("row.name"))]
+meta[is.na(meta)] <- 0
+obj <- add.metadata.to.seurat.obj(obj, meta)
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+plot.features(obj, features="connec.frac")
+# plot.features(obj, features=c("connec.frac", "COL1A1"), include.hne = TRUE)
+# plot.features(obj, features=c("inflam.frac", "PTPRC"), include.hne = TRUE)
+# plot.features(obj, features=c("neopla.frac", "EPCAM"), include.hne = TRUE)
+# plot.features(obj, features=c("necros.frac", "total"), include.hne = TRUE)
+# plot(obj[[]]$connec.frac, log(obj[[]]$nCount_Spatial))
+# plot.features(obj, features=c("nCount_Spatial", "nFeature_Spatial", "COL1A1", "total", "connec.frac"), include.hne = TRUE)
+g <- plot.features(obj, features=c("nCount_Spatial", "nFeature_Spatial", "COL1A1", "total", "connec.frac", "Stromal"), feature.names = c("nUMIs", "nGenes", "COL1A1", "Total Hovernet cells", "Fraction Stromal Cells (Hovernet)", "Fraction Stromal Cells (RCTD)"), include.hne = TRUE)
+g <- add.title.to.plot(g, paste0("Stromal signals (", sample, ")"))
+png(paste0(plots_dir, "/stromal-signals-", sample, ".png"), width = 2 * 480, height = 1  * 480)
 print(g)
 d <- dev.off()
+
+g <- plot.features(obj, features = c("neopla.frac", "EPCAM"), feature.names = c("Fraction Neoplastic Cells (Hovernet)", "EPCAM"), include.hne = TRUE)
+g <- add.title.to.plot(g, paste0("Tumor signals (", sample, ")"))
+png(paste0(plots_dir, "/tumor-signals-", sample, ".png"), width = 2 * 480, height = 1  * 480)
+print(g)
+d <- dev.off()
+
+g <- plot.features(obj, features = c("necros.frac", "percent.mt", "HMGB1", "nCount_Spatial", "nFeature_Spatial", "total"), feature.names = c("Fraction Necrotic Cells (Hovernet)", "Percent MT", "HMGB1", "nUMIs", "nGenes", "Total Hovernet cells"), include.hne = TRUE)
+g <- add.title.to.plot(g, paste0("Necrosis signals (", sample, ")"))
+png(paste0(plots_dir, "/necrosis-signals-", sample, ".png"), width = 2 * 480, height = 1  * 480)
+print(g)
+d <- dev.off()
+
+g <- plot.features(obj, features = c("PTPRC", "inflam.frac", "CD3E", "T_Cells", "CD19", "B_Cells"), feature.names = c("CD45 (pan-immue)", "Fraction Immune Cells (Hovernet)",  "CD3E (T cell)", "Fraction T Cells (RCTD)", "CD19 (B cell)", "Fraction B Cells (RCTD)"), include.hne = TRUE, nrow=2)
+g <- add.title.to.plot(g, paste0("Immune signals (", sample, ")"))
+png(paste0(plots_dir, "/immune-signals-", sample, ".png"), width = 2 * 480, height = 1  * 480)
+print(g)
+d <- dev.off()
+```
+
+```{r}
+
+# Make plots of hne, stroma vs tumor, and individual genes in CD14+ spots
+#sample <- "SC2200259_9990" 
+#obj <- filtered.objs[[sample]]
+
+df <- obj[[]]
+df$status <- "tumor"
+df[df$neopla.frac < 0.5,"status"] <- "stroma"
+
+#df$status <- "other"
+#df[df$CD8..T.cells > 0.01,"status"] <- "CD8T"
+#df[df$Myeloid > 0.01,"status"] <- "myeloid"
+
+df$status <- factor(df$status)
+obj <- AddMetaData(obj, df[, "status", drop=FALSE])
+
+expr <- GetAssayData(obj, assay="Spatial", slot="counts")
+md <- obj[[]]
+common <- intersect(colnames(expr), rownames(md))
+expr <- expr[, common]
+md <- md[common,]
+# sCD14+ (stromal macrophages): CD14+CD2+LY75+ high macrophages have improved survival relative to low 
+# iCD14+ (intratumoral macrophages): CD14+TLR4+CD163+SIGLEC
+genes <- c( "EPCAM", "PTPRC", "CD14", "CD163","CD2", "LY75", "TLR4", "SIGLEC1")
+names(genes) <- genes
+df <- merge(md, t(expr[genes, ]), by = "row.names")
+
+flag <- df[,"CD14"] > 0
+df <- df[flag, ]
+g <- ggplot(data = df, aes(x = status, y = SIGLEC1)) + geom_violin()
+
+g0 <- plot.hne(obj)
+g1 <- SpatialPlot(obj, group.by=c("status")) + theme(legend.text = element_text(size=10)) + guides(fill = guide_legend(override.aes = list(size = 5)))
+plts <- llply(genes, .fun = function(gene) ggplot(data = df, aes_string(x = "status", y = gene)) + geom_boxplot() + theme(text = element_text(size = 20)))
+
+gtot <- plot_grid(plotlist=c(list(g0), list(g1), plts), nrow=2)
+png(paste0(plots_dir, "/", sample, "-tumor-vs-stroma-expression.png"), width = 3 * 480, height = 2 * 480)
+print(gtot)
+d <- dev.off()
+
+g <- ggplot(data = df, aes(x = status, y = nCount_Spatial)) + geom_violin() + xlab("region") + ylab("nUMIs") + theme(text = element_text(size = 20))
+png(paste0(plots_dir, "/", sample, "-umis-vs-region.png"), width = 2 * 480, height = 1 * 480)
+gtot <- plot_grid(g0, g1, g, nrow=1, labels = "AUTO")
+print(gtot)
+d <- dev.off()
+```
+
+
+```{r}
+# This requires SCT be run
+if(FALSE) {
+plot(density(as.numeric(GetAssayData(obj,slot="data",assay="SCT")["EPCAM",])))
+plot(density(as.numeric(GetAssayData(obj,slot="counts",assay="SCT")["EPCAM",])))
+plot(density(as.numeric(GetAssayData(obj,slot="scale.data",assay="SCT")["EPCAM",])))
+plot(density(obj[[]]$neopla.frac))
+plot(hist(obj[[]]$Epithelial))
+
+vals <- list(
+  "raw counts" = as.numeric(GetAssayData(obj,slot="counts",assay="Spatial")["EPCAM",]),
+  "SCT (counts)" = as.numeric(GetAssayData(obj,slot="counts",assay="SCT")["EPCAM",]),
+  "SCT (data)" = as.numeric(GetAssayData(obj,slot="data",assay="SCT")["EPCAM",]),
+  "SCT (scale.data)" = as.numeric(GetAssayData(obj,slot="scale.data",assay="SCT")["EPCAM",]),
+  "RCTD Epithelial Fraction" = obj[[]]$Epithelial,
+  "Hovernet Neoplastic Fraction" = obj[[]]$neopla.frac)
+
+nms <- names(vals)
+names(nms) <- nms
+plts <- 
+  llply(nms,
+        .fun = function(nm) {
+          g <- ggplot(data = data.frame(val = vals[[nm]]), aes(x = val)) + geom_histogram()
+          g <- g + ggtitle(nm)
+          g <- g + xlab("EPCAM")
+          g
+        })
+  
+             
+
+df <- obj[[]]
+#df$status <- 0
+#df[df$neopla.frac < 0.5,"status"] <- 1
+df$status <- "tumor"
+#df[df$neopla.frac < 0.5,"status"] <- "stroma"
+df[df$Epithelial < 0.5,"status"] <- "stroma"
+df$status <- factor(df$status)
+obj <- AddMetaData(obj, df[, "status", drop=FALSE])
+# plot.features(obj, features=c("status"), include.hne=TRUE)
+# g <- SpatialPlot(obj, group.by=c("status")) + theme(text = element_text(size=20))
+g1 <- SpatialPlot(obj, group.by=c("status")) + theme(legend.text = element_text(size=10)) + guides(fill = guide_legend(override.aes = list(size = 5))) + labs(fill = "RCTD\nPrediction")
+g1 <- g1 + ggtitle("Stroma = RCTD Epithelial < 0.5")
+
+df$status <- "tumor"
+df[df$neopla.frac < 0.5,"status"] <- "stroma"
+df$status <- factor(df$status)
+obj <- AddMetaData(obj, df[, "status", drop=FALSE])
+
+g2 <- SpatialPlot(obj, group.by=c("status")) + theme(legend.text = element_text(size=10)) + guides(fill = guide_legend(override.aes = list(size = 5)))
+g2 <- g2 + ggtitle("Stroma = Hovernet Neoplastic Fraction < 0.5")
+
+g0 <- plot.hne(obj)
+
+gtot <- plot_grid(plotlist=c(plts, list(g0), list(g1), list(g2)), labels="AUTO")
+png(paste0(plots_dir, "/tumor-signal-epcam-rctd-hov.png"), width = 2 * 480, height = 2  * 480)
+print(gtot)
+d <- dev.off()
+}
+```
+
+```{r}
+sample <- "SC2200259_9990" 
+obj <- filtered.objs[[sample]]
+
+df <- obj[[]]
+df$status <- "Tumor"
+df[df$Epithelial < 0.5,"status"] <- "Stroma"
+df$status <- factor(df$status)
+obj <- AddMetaData(obj, df[, "status", drop=FALSE])
+
+#g1 <- SpatialPlot(obj, group.by=c("status")) + theme(legend.text = element_text(size=10)) + guides(fill = guide_legend(override.aes = list(size = 5))) + labs(fill = "RCTD\nPrediction")
+
+g1 <- plot.spatial(obj, features = c("Epithelial"), legend.name = "RCTD\nEpithelial\nFraction", rescale.legend = FALSE)
+
+g.stromal <- plot.spatial(obj, features = c("Stromal"), legend.name = "RCTD\nStromal\nFraction", rescale.legend = FALSE)
+
+g2 <- plot.spatial(obj, features = c("EPCAM"), legend.name = "EPCAM", rescale.legend = FALSE) + theme(legend.text = element_text(size=10))
+  
+
+g3 <- plot.spatial(obj, features = c("PTPRC"), legend.name = "CD45", rescale.legend = FALSE) + theme(legend.text = element_text(size=10))
+
+meta <- obj[[]]
+meta$row.name <- rownames(meta)
+meta <- merge(meta[, c("row.name", "row", "col")], mat, by = c("row", "col"), all.x=TRUE)
+rownames(meta) <- meta$row.name
+meta <- meta[, !(colnames(meta) %in% c("row.name"))]
+meta[is.na(meta)] <- 0
+obj <- add.metadata.to.seurat.obj(obj, meta)
+
+g4 <- plot.spatial(obj, features = c("connec.frac"), legend.name = "Hover-Net\nStromal\nFraction", rescale.legend = FALSE)
+
+g.vim <- plot.spatial(obj, features = c("VIM"), legend.name = "VIM", rescale.legend = FALSE)
+
+g.immune <- plot.spatial(obj, features = c("Immune"), legend.name = "RCTD\nImmune\nFraction", rescale.legend = FALSE)
+
+g0 <- plot.hne(obj, keep.invisible.legend = TRUE)
+
+gtot <- plot_grid(NULL, g0, NULL, g2, g.vim, g3, g1, g.stromal, g.immune, nrow=3, labels=c("","a","","b","c","d","e","f","g"))
+png(paste0(plots_dir, "/tumor-stromal-immune-markers-and-deconv.png"), width = 1.5 * 480, height = 1 * 480)
+print(gtot)
+d <- dev.off()
+
+gtot <- plot_grid(g0, g2, g1, g3, nrow=2, labels="auto")
+png(paste0(plots_dir, "/tumor-stromal-immune-signals.png"), width = 2 * 480, height = 1.5  * 480)
+print(gtot)
+d <- dev.off()
+
+gtot <- plot_grid(g0, g4, nrow=1, labels="auto")
+png(paste0(plots_dir, "/hovernet-stromal-signal.png"), width = 2 * 480, height = 0.75  * 480)
+print(gtot)
+d <- dev.off()
+```
+
+```{r}
+stop("stop")
 ```
 
 
@@ -547,6 +900,8 @@ calculate.population.spatial.correlation <- function(rctd, obj) {
 ```{r}
 nms <- names(filtered.objs)
 names(nms) <- nms
+scor.file <- paste0(plots_dir, "/scor.csv")
+if(!file.exists(scor.file)) {
 scor <-
   ldply(nms,
         .fun = function(nm) {
@@ -557,11 +912,17 @@ scor <-
         })
 colnames(scor)[1] <- "sample"
 scor <- scor[order(scor$bivar.morans.i, decreasing=FALSE),]
+write.table(file=scor.file, scor, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+}
+scor <- read.table(scor.file, sep=",", header=TRUE)
+
 ```
 
 ```{r}
 nms <- names(filtered.objs)
 names(nms) <- nms
+pop.file <- paste0(plots_dir, "/pop-scor.csv")
+if(!file.exists(pop.file)) {
 pop.scor <-
   ldply(nms,
         .fun = function(nm) {
@@ -571,6 +932,9 @@ pop.scor <-
         })
 colnames(pop.scor)[1] <- "sample"
 pop.scor <- pop.scor[order(pop.scor$bivar.morans.i, decreasing=FALSE),]
+write.table(file=pop.file, pop.scor, sep=",", row.names=FALSE, col.names=TRUE, quote=FALSE)
+}
+pop.scor <- read.table(pop.file, sep=",", header=TRUE)
 ```
 
 
@@ -585,6 +949,7 @@ pop.scor.meta <- pop.scor.meta[order(pop.scor.meta$pval.max, decreasing=FALSE),]
 ```
 
 ```{r}
+
 ```
 
 
@@ -716,29 +1081,11 @@ for(i in 1:length(filtered.objs)) {
 ```
 
 ```{r}
-# Output Myeloid cell genes of interest to Karolina
-l_ply(datasets,
-      .fun = function(dataset) {
-        file <- paste0(plots_dir, "/", "myeloid-genes-", dataset, ".png")
-        png(file, width = 2 * 480, height = 1 * 480)
-        # g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = TRUE)
-        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "CD8A", "Myeloid", "CD14", "CD2", "LY75", "TLR4", "CD163", "SIGLEC1"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
-        print(g)
-        d <- dev.off()
-      })
+
 ```
 
 ```{r}
-# Output T cell genes of interest to Karolina
-l_ply(datasets,
-      .fun = function(dataset) {
-        file <- paste0(plots_dir, "/", "cd8-t-cell-genes-", dataset, ".png")
-        png(file, width = 2 * 480, height = 1 * 480)
-        # ITGAE = CD103
-        g <- plot.features(filtered.objs[[dataset]], features = c("Epithelial", "CD8..T.cells", "PTPRC", "CD3E", "CD8A", "ITGAE", "CXCL13", "Myeloid"), include.hne = TRUE, include.umi.cnts = TRUE, include.feature.cnts = FALSE)
-        print(g)
-        d <- dev.off()
-      })
+
 ```
 
 
