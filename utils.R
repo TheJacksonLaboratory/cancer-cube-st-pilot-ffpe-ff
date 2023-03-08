@@ -1,5 +1,81 @@
 
-
+#' Run RCTD deconvolution by first ensuring that single-cell RNA-seq reference only includes genes in ST data.
+#'
+#' @param st.obj A Seurat object for the ST data
+#' @param sc.counts The reference scRNA-seq count matrix (with genes as rows and cells as columns). 
+#'                  Genes should be in the same namespace (e.g., symbols or Ensembl ids) as the ST count data in st.obj.
+#' @param sc.cell.types The cell type assignments of each cell in sc.counts stored in a vector, named according to the columns/cells of sc.counts
+#' @param rds.output.file If non-null, an output file name to store the RCTD results. Default: NULL.
+#'                        If the file exists, the output will be read and returned by this function.
+#' @param run.rctd Boolean indicating whether to actually deconvolve data (run.RCTD) or simply to create.RCTD.
+#' @param intersect.sc.and.st.genes Boolean indicating whether to subset scRNA-seq genes to those within
+#'        ST data.
+#' @return An RCTD object
+#' 
+#' Assuming st.obj is the filtered feature obj, the associated count matrix should _already_ be filtered to include only
+#' targeted genes, as described here:
+#' https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/matrices
+rctd.wrapper <- function(st.obj, sc.counts, sc.cell.types, rds.output.file = NULL, run.rctd = TRUE, intersect.sc.and.st.genes = FALSE) {
+  if(!is.null(rds.output.file) && file.exists(rds.output.file)) {
+    myRCTD <- readRDS(rds.output.file)
+    gc()
+    return(myRCTD)
+  }
+  
+  # Get raw ST coiunts
+  st.counts <- GetAssayData(st.obj, assay="Spatial", slot="counts")
+  
+  # Get the spot coordinates
+  st.coords <- st.obj[[]][, c("col", "row")]
+  colnames(st.coords) <- c("x","y")
+  
+  # Get the # of UMI per spot
+  nUMI <- colSums(st.counts) # In this case, total counts per pixel is nUMI
+  
+  # Create the RCTD 'puck', representing the ST data
+  puck <- SpatialRNA(st.coords, st.counts, nUMI)
+              
+  # Create an RCTD scRNA-seq reference. 
+  # NB: we do this for each of potentially multiple ST samples because some of those
+  # samples may be from FFPE assays and others from fresh frozen. These will have
+  # different gene sets that should be reflected (i.e., filtered) in the scRNA-seq reference (sc.counts).
+  
+  if(intersect.sc.and.st.genes) {
+    stop("Would not recommend restricting scRNA-seq genes to those in ST!")
+    # spacexr/RCTD:get_de_genes has an expression threshold (expr_threshold)
+    # that any marker gene must exceed. Restricting the set of genes (to those in ST),
+    # impacts their normalization (by total UMI) in RCTD. I have observed that this
+    # can lead to significant differences in the number of genes passing the 
+    # expression threshold (e.g., twice as many following subsetting the genes).
+    # Note that get_de_genes will only consider as markers those genes in common
+    # anyways between scRNA-seq and ST. As such, it intuitively makes sense
+    # to consistently define the normalized expression values of the scRNA-seq data
+    # irrespective of the ST data -- i.e., without subsetting.
+    sc.counts <- sc.counts[rownames(sc.counts) %in% rownames(st.counts),]
+  }
+  sc.cell.types <- sc.cell.types[colnames(sc.counts)]
+  nUMI <- colSums(sc.counts)
+  reference <- Reference(sc.counts, sc.cell.types, nUMI, n_max_cells = ncol(sc.counts) + 1)
+              
+  max_cores <- min(10, detectCores() - 1)
+  
+  # Note that we have keep_reference = TRUE here. Without it, the default is
+  # keep_reference = FALSE, which would ignore the Reference we have 
+  # intentionally created above.
+  myRCTD <- create.RCTD(puck, reference, max_cores = max_cores, keep_reference = TRUE)
+  
+  # NB: running in full mode!
+  if(run.rctd) {
+    myRCTD <- suppressPackageStartupMessages(run.RCTD(myRCTD, doublet_mode = 'full'))
+  }
+  
+  if(!is.null(rds.output.file)) {
+    saveRDS(myRCTD, rds.output.file)
+  }
+  
+  gc()
+  myRCTD
+}
 
 #' Create a .csv file for the automatic analysis of ST data, as it is described 
 #' here: https://github.com/sdomanskyi/spatialtranscriptomics
@@ -738,10 +814,18 @@ get.targeted.genes <- function(mol.info.file) {
                 "gene.id.targets" = gene.ensg.ids,
                 "gene.id.off.targets" = NULL))
   }
-  probe.gene.ids <- h5read(mol.info.file, paste0(ls.info[probe.set.key.flag,"group"], "/", ls.info[probe.set.key.flag,"name"]))
+  # Empirically, it appears that these indices are zero-based. I can't find that directly stated online, however:
+  # 1. Other indices are zero-based, e.g., barcode_idx and feature_idx here:
+  # https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/molecule_info
+  # 2. As stated here
+  # https://support.10xgenomics.com/spatial-gene-expression/software/pipelines/latest/output/matrices
+  # the filtered feature for FFPE/targeted assays should only include the targeted genes. When I assume zero-based indices (as below),
+  # I get a near perfect correspondence between probe.gene.names and the rownames of the (filtered) count matrix.
+  # When I assume a one-based index, as I had previously, the correspondence is poor.
+  probe.gene.indices <- h5read(mol.info.file, paste0(ls.info[probe.set.key.flag,"group"], "/", ls.info[probe.set.key.flag,"name"])) + 1
   gene.indices <- 1:length(gene.ensg.ids)
-  nonprobe.gene.indices <- gene.indices[!(gene.indices %in% probe.gene.ids)]
-  probe.gene.indices <- gene.indices[(gene.indices %in% probe.gene.ids)]
+  nonprobe.gene.indices <- gene.indices[!(gene.indices %in% probe.gene.indices)]
+  # probe.gene.indices <- gene.indices[(gene.indices %in% probe.gene.ids)]
   nonprobe.gene.names <- sort(gene.names[nonprobe.gene.indices])
   probe.gene.names <- gene.names[probe.gene.indices]
   nonprobe.gene.ids <- gene.ensg.ids[nonprobe.gene.indices]
