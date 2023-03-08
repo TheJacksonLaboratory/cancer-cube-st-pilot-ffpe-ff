@@ -55,11 +55,12 @@ calculate.qc.functions<-function(filename){
 #' of a specific dataset
 #' 
 #' @param filename A file including all the necessary information directory where the .csv file will be saved#' 
-#' @param output_dir A base directory where the config .csv file will be saved and the analysis files 
+#' @param output_dir A base directory where the config .csv file will be saved and the analysis files.
+#'                   If null (default), then output analysis and plots dirs are not created and neither is .csv config file 
 #' @return temp_list A list with all the important metadata and filtered and unfiltered values as they 
 #' are described here: https://satijalab.org/seurat/reference/load10x_spatial
 #' 
-load.init.file <- function(filename, output_dir) {
+load.init.file <- function(filename, output_dir = NULL) {
   metadata <- read.csv(file = filename, stringsAsFactors = FALSE)
   metadata$tissue_type <-as.factor(basename(dirname(filename)))
   spaceranger_dirs <- metadata$dataset_names
@@ -68,14 +69,16 @@ load.init.file <- function(filename, output_dir) {
   unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
   temp_list<-list(metadata=metadata,filtered.objs=filtered.objs,unfiltered.objs=unfiltered.objs)
 
-  temp_list$base_dir<-output_dir
-  temp_list$analysis_dir <- paste0(output_dir, '/analysis/')
-  dir.create(temp_list$analysis_dir, showWarnings = FALSE, recursive = TRUE)
-  temp_list$plots_dir <- paste0(output_dir, '/plots/')
-  dir.create(temp_list$plots_dir, showWarnings = FALSE, recursive = TRUE)
-  
-  # Write csv file for automatic ST pipeline 
-  write.automated.csv.file(output_dir,temp_list$metadata$names, temp_list$metadata$dataset_names, temp_list$metadata$species)
+  if(!is.null(output_dir)) {
+    temp_list$base_dir<-output_dir
+    temp_list$analysis_dir <- paste0(output_dir, '/analysis/')
+    dir.create(temp_list$analysis_dir, showWarnings = FALSE, recursive = TRUE)
+    temp_list$plots_dir <- paste0(output_dir, '/plots/')
+    dir.create(temp_list$plots_dir, showWarnings = FALSE, recursive = TRUE)
+    
+    # Write csv file for automatic ST pipeline 
+    write.automated.csv.file(output_dir,temp_list$metadata$names, temp_list$metadata$dataset_names, temp_list$metadata$species)
+  }
   temp_list
 }
 
