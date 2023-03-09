@@ -162,8 +162,8 @@ plot.distributions.vs.cell.type <- function(df, response.var = "nCount_Spatial",
 #' @param legend.name A string name for the legend
 #' @param rescale.legend Boolean indicating whether to divide the values by 1000 in legend scale (obviously hacky, but intended for large numbers like total counts)
 #' @return a ggplot
-plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE) {
-  g <- SpatialFeaturePlot(obj, features = features)
+plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Read Count", rescale.legend = TRUE, legend.limits = NULL, slot = "counts") {
+  g <- SpatialFeaturePlot(obj, features = features, slot = slot)
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "bottom", legend.key.width = unit(1.5, 'cm'))
   g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15), legend.position = "right")
   # See https://stackoverflow.com/questions/45998396/unset-existing-scale-fill-discrete-in-ggplot2-or-suppress-message-for-new-scale
@@ -174,6 +174,8 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
   g$scales$scales[[i]] <- NULL
   if(rescale.legend) {
     g <- g + scale_fill_gradientn(name = legend.name, labels = function(x) { sprintf('%.0f', x/1000) }, colours = Seurat:::SpatialColors(n = 100))
+  } else if(!is.null(legend.limits)) {
+    g <- g + scale_fill_gradientn(name = legend.name, colours = Seurat:::SpatialColors(n = 100), limits = legend.limits)
   } else {
     g <- g + scale_fill_gradientn(name = legend.name, colours = Seurat:::SpatialColors(n = 100))
   }
@@ -195,13 +197,15 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
 #' @param include.umi.cnts Boolean indicating whether to include a plot of UMI counts
 #' @param include.feature.cnts Boolean indicating whether to include a plot of feature / gene counts
 #' @return a ggplot
-plot.features <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, ...) {
+plot.features_ <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
   plts <- NULL
   if(!is.null(features) && (length(features) > 0)) {
     if(is.null(feature.names)) { feature.names <- features }
     indices <- 1:length(features)
     names(indices) <- features
-    plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), legend.name = feature.names[i], rescale.legend = FALSE))
+    lims <- legend.limits
+    if(is.null(legend.limits)) { lims <- rep(NULL, length(features))}
+    plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), legend.name = feature.names[i], rescale.legend = FALSE, legend.limits = lims[[i]]))
   }
   if(include.feature.cnts) {
     p <- plot.spatial(obj, "nFeature_Spatial", "# Genes (K)", rescale.legend = TRUE)
@@ -215,6 +219,12 @@ plot.features <- function(obj, features, feature.names = NULL, include.hne = FAL
     p <- plot.hne(obj, keep.invisible.legend = TRUE)
     plts <- c(list(p), plts)
   }
+  #plot_grid(plotlist = plts, ...)
+  plts
+}
+
+plot.features <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
+  plts <- plot.features_(obj, features, feature.names, include.hne, include.umi.cnts, include.feature.cnts , legend.limits, ...)
   plot_grid(plotlist = plts, ...)
 }
 
