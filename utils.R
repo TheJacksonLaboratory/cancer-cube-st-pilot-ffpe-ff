@@ -111,11 +111,22 @@ write.automated.csv.file <- function(base_dir, dataset_names, species_sample) {
 #'  pxl_col_in_fullres: The column pixel coordinate of the center of the spot in the full resolution image.
 get.tissue.position.metadata <- function(spaceranger_dir) {
   image.dir <- paste0(spaceranger_dir, "/", "spatial/")
+  
+  file <- file.path(image.dir, "tissue_positions_list.csv")
+  col.names <- c("barcodes", "tissue", "row", "col", "imagerow", "imagecol")
+  if(file.exists(file)) {
+    tissue.positions <- 
+      read.csv(file = file, col.names = col.names, header = FALSE, as.is = TRUE, row.names = 1)
+    return(tissue.positions)
+  }
+  file <- file.path(image.dir, "tissue_positions.csv")
+  if(!file.exists(file)) {
+    stop("Found neither tissue_positions_list.csv nor tissue_positions.csv")
+  }
   tissue.positions <- 
-    read.csv(file = file.path(image.dir, "tissue_positions_list.csv"), 
-             col.names = c("barcodes", "tissue", "row", "col", "imagerow", "imagecol"), header = FALSE, 
-             as.is = TRUE, row.names = 1)
-  tissue.positions
+    read.csv(file = file, header = TRUE, as.is = TRUE)
+  colnames(tissue.positions) <- col.names
+  return(tissue.positions)
 }
 
 #' Create a Seurat object based on the spaceranger baseline file
@@ -511,10 +522,12 @@ add.metadata.to.seurat.obj <- function(obj, metadata.df) {
 
 #' Enable parallel execution.
 #'  
+#'  #' @param obj A Seurat object
 #' @return The number of cores available for parallel execution.
-setup.parallel.environment <- function() {
+setup.parallel.environment <- function(max.cores = NULL) {
   num.cores <- detectCores()
   if(!is.na(num.cores) && (num.cores > 1)) {
+    if(!is.null(max.cores)) { num.cores <- min(num.cores, max.cores) }
     suppressPackageStartupMessages(p_load("doMC"))
     cat(paste("Registering ", num.cores-1, " cores.\n", sep=""))
     registerDoMC(cores=(num.cores-1))
