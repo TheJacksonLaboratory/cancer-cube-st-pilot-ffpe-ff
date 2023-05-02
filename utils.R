@@ -716,6 +716,36 @@ get.per.spot.alignment.metrics <- function(bam.file) {
   spot.res
 }
 
+#' Extract per-spot number/fraction of intronic, exonic, and intergenic (mapped) reads and number unmapped reads over Seurat objects.
+#' 
+#' Wrapper to call get.per.spot.alignment.metrics across Seurat objects. 
+#' 
+#' @param spaceranger_dirs _Named_ list of spacernanger output directories, one per dataset.
+#' @return A list of tables of alignment metrics, each output by get.per.spot.alignment.metrics
+get.all.per.spot.alignment.metrics <- function(spaceranger_dirs, prefix = NULL) {
+  nms <- names(spaceranger_dirs)
+  names(nms) <- nms
+  align.metrics <-
+    llply(nms, .parallel = TRUE,
+          .fun = function(nm) {
+            print(nm)
+            alignment.metric.file <- NULL
+            if(!is.null(prefix)) {
+              alignment.metric.file <- paste0(prefix, "/", nm, "-alignment-metrics.csv")
+            }
+            bam.file <- paste0(spaceranger_dirs[[nm]], "/possorted_genome_bam.bam")
+            df <- NULL
+            if(is.null(alignment.metric.file) || !file.exists(alignment.metric.file)) { 
+              df <- get.per.spot.alignment.metrics(bam.file)
+              write.table(file=alignment.metric.file, df, row.names=FALSE, col.names=TRUE, sep=",", quote=FALSE)
+            } else {
+              df <- as.data.frame(fread(alignment.metric.file))
+            }
+            df
+          })
+  align.metrics
+}
+
 #' Extract per-spot number of UMIs, total number of reads, and saturation.
 #' 
 #' Number of UMIs should match nCount_Spatial in metadata.
@@ -848,3 +878,4 @@ get.targeted.genes <- function(mol.info.file) {
        "gene.id.targets" = probe.gene.ids,
        "gene.id.off.targets" = nonprobe.gene.ids)
 }
+
