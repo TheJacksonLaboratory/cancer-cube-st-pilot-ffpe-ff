@@ -57,7 +57,7 @@ rctd.wrapper <- function(st.obj, sc.counts, sc.cell.types, rds.output.file = NUL
   nUMI <- colSums(sc.counts)
   reference <- Reference(sc.counts, sc.cell.types, nUMI, n_max_cells = ncol(sc.counts) + 1)
               
-  max_cores <- min(10, detectCores() - 1)
+  max_cores <- min(5, detectCores() - 1)
   
   # Note that we have keep_reference = TRUE here. Without it, the default is
   # keep_reference = FALSE, which would ignore the Reference we have 
