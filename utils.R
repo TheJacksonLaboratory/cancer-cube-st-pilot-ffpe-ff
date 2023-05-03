@@ -726,7 +726,7 @@ get.all.per.spot.alignment.metrics <- function(spaceranger_dirs, prefix = NULL) 
   nms <- names(spaceranger_dirs)
   names(nms) <- nms
   align.metrics <-
-    llply(nms, .parallel = TRUE,
+    llply(nms, .parallel = FALSE,
           .fun = function(nm) {
             print(nm)
             alignment.metric.file <- NULL
