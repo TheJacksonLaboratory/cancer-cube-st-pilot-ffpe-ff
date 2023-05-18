@@ -440,3 +440,25 @@ plot.biotypes.across.samples <- function(objs, species = "human", sample.labels 
   g <- g + xlab("Biotype") + ylab("Proportion")
   g
 }
+
+#' Create boxplots showing the contribution to total expression of the top n genes
+#'  
+#' @param mat An expression matrix
+#' @param n.top The number of top genes (by frequency) to plot
+#' @param highlight.genes A list of genes to highlight in box
+#' @return A ggplot
+plot.top.genes <- function(mat, n.top = 20, highlight.genes = NULL) {
+  mat <- sweep(mat, 2, colSums(mat), "/")
+  top.genes <- get.top.genes.matrix(mat, n.top = n.top)
+  df <- melt(mat[top.genes,])
+  colnames(df) <- c("gene", "spot", "value")
+  df$gene <- factor(df$gene, levels = rev(top.genes))
+  g <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = 100 * value), fill = (scales::hue_pal())(n.top)[n.top:1]) + coord_flip()
+  g <- g + ylab("% total count per cell") + xlab("")
+  g <- g + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
+  if(!is.null(highlight.genes)) {
+    vec_fontface <- ifelse(levels(df$gene) %in% highlight.genes,"bold","plain")
+    g <- g + theme(axis.text.y=element_text(face=vec_fontface))
+  }
+  g
+}
