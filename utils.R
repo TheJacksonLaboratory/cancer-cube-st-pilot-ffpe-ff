@@ -272,8 +272,8 @@ subset.matrix.based.on.tissue.status <- function(obj, tissue.val, tissue.col = "
 #' @param rctd RCTD object
 #' @return a dataframe
 
-format.rctd.output <- function(rctd) {
-  df <- format.rctd.output_(rctd)
+format.rctd.output <- function(rctd, normalize = FALSE) {
+  df <- format.rctd.output_(rctd, normalize = normalize)
   df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
   df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
   df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
