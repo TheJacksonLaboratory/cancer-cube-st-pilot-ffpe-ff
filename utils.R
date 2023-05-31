@@ -265,24 +265,6 @@ subset.matrix.based.on.tissue.status <- function(obj, tissue.val, tissue.col = "
   mat[,cell.subset]
 }
 
-#' Return a dataframe where each row corresponds to a spot,
-#' its barcode is the rowname, its position is in the x and y columns,
-#' and its normalized weights are in the remaining columns, named
-#' according to the corresponding cell type.
-#' @param rctd RCTD object
-#' @return a dataframe
-
-format.rctd.output <- function(rctd, normalize = FALSE) {
-  df <- format.rctd.output_(rctd, normalize = normalize)
-  df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
-  df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
-  df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
-  cell.types <- c("dPVL", "imPVL")
-  df$PVL <- apply(df[, cell.types], 1, function(row) sum(row))
-  cell.types <- c("iCAFs", "myCAFs")
-  df$CAF <- apply(df[, cell.types], 1, function(row) sum(row))
-  df
-}
 
 #' Identify biotype of each gene in a a geneset
 #' 
@@ -877,5 +859,34 @@ get.targeted.genes <- function(mol.info.file) {
        "gene.off.targets" = nonprobe.gene.names,
        "gene.id.targets" = probe.gene.ids,
        "gene.id.off.targets" = nonprobe.gene.ids)
+}
+
+#' Wrapper to apply sctransform to a seurat object.
+#' 
+#' @param obj A seurat object
+#' @param use.v2 Boolean indicating whether to apply the "v2" flavor of sctransform
+#' @param assay The assay to apply sctransform to
+#' @return obj modified to hold sctransform'ed results in the "SCT" assay
+apply.sctransform_ <- function(obj, use.v2 = TRUE, assay = "Spatial") {
+  # obj <- PercentageFeatureSet(obj, pattern = "^MT-", col.name = "percent.mt")
+  if(use.v2) { 
+    obj <- SCTransform(obj, assay = assay, vars.to.regress = c(paste0("nCount_", assay)), verbose = FALSE, vst.flavor = "v2", method = "glmGamPoi")
+  } else {
+    obj <- SCTransform(obj, assay = assay, vars.to.regress = c(paste0("nCount_", assay)), verbose = FALSE)
+  }
+  return(obj)
+}
+
+#' Wrapper to apply sctransform to a list of seurat objects.
+#' 
+#' @param objs A list of seurat objects
+#' @return the list of objs, with each entry modified to hold sctransform'ed results in the "SCT" assay
+apply.sctransform <- function(objs, use.v2 = TRUE) {
+  objs <-
+    llply(objs,
+          .fun = function(obj) {
+            apply.sctransform_(obj, use.v2 = use.v2)
+          })
+  objs
 }
 
