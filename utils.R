@@ -126,6 +126,8 @@ get.tissue.position.metadata <- function(spaceranger_dir) {
   tissue.positions <- 
     read.csv(file = file, header = TRUE, as.is = TRUE)
   colnames(tissue.positions) <- col.names
+  rownames(tissue.positions) <- tissue.positions$barcodes
+  tissue.positions <- tissue.positions[, !(colnames(tissue.positions) %in% c("barcodes"))]
   return(tissue.positions)
 }
 
