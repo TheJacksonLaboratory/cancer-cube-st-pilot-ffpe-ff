@@ -795,26 +795,36 @@ get.visium.spot.distance.separation <- function(obj) {
                .fun = function(df) {
                  o <- order(df$col, decreasing=FALSE)
                  df <- df[o,]
-                 diffs = unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagecol"] - df[i,"imagecol"]))
-                 na.omit(data.frame(diff=diffs))
+                 diffs <- unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagecol"] - df[i,"imagecol"]))
+                 unit.diffs <- unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"col"] - df[i,"col"]))
+                 na.omit(data.frame(diff=diffs, unit.diff=unit.diffs))
                })
   # Take the most common such distance between columns of neighboring spots as the
   # separation in the x direction -- dx
   tbl <- table(tmp$diff)
   dx <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
+  
+  tbl <- table(tmp$unit.diff)
+  unit.dx <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
+  
   # Within each col, calculate the distance between spots ordered by row.
   tmp <- ddply(obj[[]], .variables=c("col"), 
                .fun = function(df) {
                  o <- order(df$row, decreasing=FALSE)
                  df <- df[o,]
-                 diffs = unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagerow"] - df[i,"imagerow"]))
-                 na.omit(data.frame(diff=diffs))
+                 diffs <- unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"imagerow"] - df[i,"imagerow"]))
+                 unit.diffs <- unlist(lapply(1:(nrow(df)-1), function(i) df[i+1,"row"] - df[i,"row"]))
+                 na.omit(data.frame(diff=diffs, unit.diff=unit.diffs))
                })
   # Take the most common such distance between rows of neighboring spots as the
   # separation in the y direction -- dy
   tbl <- table(tmp$diff)
   dy <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
-  return(c(dx, dy))
+  
+  tbl <- table(tmp$unit.diff)
+  unit.dy <- as.numeric(names(sort(tbl, decreasing=TRUE))[1])
+  
+  return(c(dx, dy, unit.dx, unit.dy))
 }
 
 #' Return the genes targeted by sequencing.

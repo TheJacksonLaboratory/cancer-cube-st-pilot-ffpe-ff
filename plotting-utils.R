@@ -197,7 +197,7 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
 #' @param include.umi.cnts Boolean indicating whether to include a plot of UMI counts
 #' @param include.feature.cnts Boolean indicating whether to include a plot of feature / gene counts
 #' @return a ggplot
-plot.features_ <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
+plot.features_ <- function(obj, features, feature.names = NULL, slot = "counts", include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
   plts <- NULL
   if(!is.null(features) && (length(features) > 0)) {
     if(is.null(feature.names)) { feature.names <- features }
@@ -205,7 +205,7 @@ plot.features_ <- function(obj, features, feature.names = NULL, include.hne = FA
     names(indices) <- features
     lims <- legend.limits
     if(is.null(legend.limits)) { lims <- rep(NULL, length(features))}
-    plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), legend.name = feature.names[i], rescale.legend = FALSE, legend.limits = lims[[i]]))
+    plts <- lapply(indices, function(i) plot.spatial(obj, features = c(features[i]), slot = slot, legend.name = feature.names[i], rescale.legend = FALSE, legend.limits = lims[[i]]))
   }
   if(include.feature.cnts) {
     p <- plot.spatial(obj, "nFeature_Spatial", "# Genes (K)", rescale.legend = TRUE)
@@ -223,8 +223,8 @@ plot.features_ <- function(obj, features, feature.names = NULL, include.hne = FA
   plts
 }
 
-plot.features <- function(obj, features, feature.names = NULL, include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
-  plts <- plot.features_(obj, features, feature.names, include.hne, include.umi.cnts, include.feature.cnts , legend.limits, ...)
+plot.features <- function(obj, features, feature.names = NULL, slot = "counts", include.hne = FALSE, include.umi.cnts = FALSE, include.feature.cnts = FALSE, legend.limits = NULL, ...) {
+  plts <- plot.features_(obj, features, feature.names, slot, include.hne, include.umi.cnts, include.feature.cnts , legend.limits, ...)
   plot_grid(plotlist = plts, ...)
 }
 
