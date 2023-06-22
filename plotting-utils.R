@@ -462,3 +462,11 @@ plot.top.genes <- function(mat, n.top = 20, highlight.genes = NULL) {
   }
   g
 }
+
+ggplot_smooth_scatter <- function(data, mapping, pwr = 0.25, n = 200){
+  p <- ggplot(data = data, mapping = mapping) + 
+    stat_density2d(aes(fill=..density..^pwr), geom="tile", contour = FALSE, n = n) +
+    scale_fill_continuous("", low = "white", high = "dodgerblue4")
+  ##        scale_fill_gradientn(colours=rainbow(100))
+  p
+}
