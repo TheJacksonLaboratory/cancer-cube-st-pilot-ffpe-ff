@@ -1,18 +1,32 @@
 ---
-title: "Cube FFPE vs FF pilot"
+title: "TNBC"
 output: html_notebook
 ---
+
+
 
 ```{r}
 # pacman is a "package manager" that defines the p_load function.
 # p_load automatically installs a library if it is not already installed.
 # This often, but doesn't always, works.
+if(!require("pacman")) {
+  install.packages("pacman")
+}
 suppressPackageStartupMessages(library(pacman)) 
 suppressPackageStartupMessages(library(Seurat))
-# devtools::install_github("dmcable/spacexr", build_vignettes = FALSE)
-suppressPackageStartupMessages(p_load(spacexr))
-suppressPackageStartupMessages(p_load(hdf5r))
+if(!require("spacexr")) {
+  devtools::install_github("dmcable/spacexr", build_vignettes = FALSE)
+  suppressPackageStartupMessages(p_load(spacexr))
+}
+#install.packages("hdf5r")
+#suppressPackageStartupMessages(p_load(hdf5r))
+# install.packages("hdf5r", configure.args="--with-hdf5=/home/whitebr/local/hdf5/bin/h5cc")
+# install.packages("https://cran.r-project.org/src/contrib/hdf5r_1.3.8.tar.gz",repos=NULL,type="source", configure.args="--with-hdf5=/home/whitebr/local/hdf5/bin/h5cc")
+#install.packages("https://cran.r-project.org/src/contrib/hdf5r_1.3.8.tar.gz",repos=NULL,type="source", configure.args="--with-hdf5=/home/whitebr/local/hdf5-1.14.0/bin/h5cc")
+dyn.load("/home/whitebr/local/hdf5-1.14.0/lib/libhdf5_hl.so.310")
+library(hdf5r)
 suppressPackageStartupMessages(p_load(ggplot2))
+suppressPackageStartupMessages(p_load(edgeR))
 suppressPackageStartupMessages(p_load(patchwork))
 suppressPackageStartupMessages(p_load(dplyr))
 suppressPackageStartupMessages(p_load(plyr))
@@ -25,7 +39,7 @@ suppressPackageStartupMessages(p_load(ggbeeswarm))
 suppressPackageStartupMessages(p_load(ComplexHeatmap))
 # devtools::install_github("sjmgarnier/viridisLite")
 suppressPackageStartupMessages(library(viridisLite))
-suppressPackageStartupMessages(library(dendextend))
+suppressPackageStartupMessages(p_load(dendextend))
 # suppressPackageStartupMessages(p_load(CCA))
 # suppressPackageStartupMessages(p_load("sRDA"))
 suppressPackageStartupMessages(p_load(PMA))
@@ -45,23 +59,56 @@ suppressPackageStartupMessages(p_load(gridExtra))
 suppressPackageStartupMessages(p_load(openxlsx))
 suppressPackageStartupMessages(p_load(data.table))
 suppressPackageStartupMessages(p_load(biomaRt))
-library("gplots")
-library(RColorBrewer)
-library(harmony)
+suppressPackageStartupMessages(library("gplots"))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(p_load(harmony))
 
 # suppressPackageStartupMessages(p_load(spots))
 # install.packages("devtools")
 # devtools::install_github("stevexniu/spots")
-library(spots)
+suppressPackageStartupMessages(library(spots))
 
 suppressPackageStartupMessages(p_load(KRLS)) # for gausskernel
 suppressPackageStartupMessages(p_load(devtools))
+
+suppressPackageStartupMessages(p_load(rhdf5))
+suppressPackageStartupMessages(p_load(Rsamtools))
+if(TRUE) {
+if(!require(OmnipathR)) {
+  BiocManager::install('OmnipathR')
+}
+if(!require(decoupleR)) {
+  # install.packages("BiocManager")
+  # BiocManager::install("decoupleR")
+  devtools::install_git("https://github.com/saezlab/decoupleR")
+  # BiocManager::install("saezlab/decoupleR")
+}
+suppressPackageStartupMessages(p_load(decoupleR))
+}
+if(!require(dorothea)) {
+  BiocManager::install("dorothea")
+}
+suppressPackageStartupMessages(p_load(dorothea))
+
+suppressPackageStartupMessages(p_load(dplyr))
+suppressPackageStartupMessages(p_load(tibble))
+suppressPackageStartupMessages(p_load(tidyr))
+
+if(!require(STdeconvolve)) {
+  require(remotes)
+  remotes::install_github('JEFworks-Lab/STdeconvolve')
+}
 
 #require(devtools)
 # #install_version("rlang", version="1.0.5", repos = "http://cran.us.r-project.org")
 
 # remotes::install_github("satijalab/sctransform", ref="develop")
 # BiocManager::install("glmGamPoi")
+
+suppressPackageStartupMessages(p_load(MAST))
+suppressPackageStartupMessages(p_load(transformGamPoi))
+# for ridge in misty
+dyn.load('/home/whitebr/local/gsl-2.5/lib/libgsl.so.23')
 ```
 
 
@@ -71,8 +118,10 @@ Setup a parallel execution environment.
 num.cores <- detectCores()
 if(!is.na(num.cores) && (num.cores > 1)) {
   suppressPackageStartupMessages(p_load("doMC"))
+  # num.cores <- min(num.cores,6)
   cat(paste("Registering ", num.cores-1, " cores.\n", sep=""))
   registerDoMC(cores=(num.cores-1))
+  options(mc.cores=num.cores-1)
 }
 
 ```
@@ -80,48 +129,1956 @@ if(!is.na(num.cores) && (num.cores > 1)) {
 ```{r}
 url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/r_hne_image_utils/main/hovernet-utils.R"
 source_url(url) # for extract.cell.info.from.hovernet.output, extract.hovernet.cell.info
-source("utils.R")
-source("plotting-utils.R")
+url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/cancer-cube-st-pilot-ffpe-ff/main/utils.R"
+source(url)
+url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/cancer-cube-st-pilot-ffpe-ff/main/plotting-utils.R"
+source(url)
 ```
+
+```{r}
+endo.init.file <- '/pod/2/activities/jaxcc/CATch-project/raw-data/visium/analysis_dir/Endometrium/Endometrium.csv'
+peri.init.file <- '/pod/2/activities/jaxcc/CATch-project/raw-data/visium/analysis_dir/Peritoneum/peritoneum.csv'
+endo.dataset.info <- read.table(endo.init.file, sep=",", header=TRUE)
+peri.dataset.info <- read.table(peri.init.file, sep=",", header=TRUE)
+
+# I don't know why the peri single_cell_Expr and single_cell_cell_types are NA. Fill them in
+peri.dataset.info$single_cell_expr <- endo.dataset.info[1, "single_cell_expr"]
+peri.dataset.info$single_cell_cell_types <- endo.dataset.info[1, "single_cell_cell_types"]
+
+dataset.info <- rbind(endo.dataset.info, peri.dataset.info)
+
+output_base_dir <- '/projects/compsci/jgeorge/whitebr/cancer-cube/endometrium/'
+dir.create(output_base_dir, recursive=TRUE)
+
+datasets <- dataset.info$names
+spaceranger_dirs <- dataset.info$dataset_names
+
+names(spaceranger_dirs) <- datasets
+names(datasets) <- datasets
+
+# Define and create output results and plots directories
+# base_dir_antonis<-'/projects/compsci/USERS/somara/cancer-cude/qc-pilot/'
+analysis_dir <- paste0(output_base_dir, '/analysis/')
+dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
+plots_dir <- paste0(output_base_dir, '/plots/')
+dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+
+# Prefix for all output files (results and plots)
+analysis_file_prefix <- "endo-"
+
+```
+
+```{r}
+
+names(datasets) <- datasets
+
+
+# Extract the sample name from the datasets (i.e., foo_<sample>)
+patient <- unlist(lapply(datasets, function(str) unlist(strsplit(str, split="-"))[2]))
+short.sample <- unlist(lapply(datasets, function(str) unlist(strsplit(str, split="-"))[3]))
+tissue <- unlist(lapply(datasets, function(str) unlist(strsplit(str, split="-"))[1]))
+
+patient.df <- data.frame(sample = datasets, patient = patient, short.sample = short.sample, tissue = tissue)
+rownames(patient.df) <- patient.df$sample
+
+```
+
+
+```{r}
+p_load(moments)
+p_load(qvalue)
+tryCatch(source("https://raw.githubusercontent.com/saketkc/scRNA_NB_comparison/master/code/01_run_glm.R"),
+         error = function(e) print(e))
+```
+
+```{r}
+source("/home/whitebr/cancer-cube-st-pilot-ffpe-ff/misty-utils.R")
+```
+
+
+
+
+```{r}
+# net <- get_collectri(organism='human', split_complexes=FALSE)
+# net <- decoupleR::get_dorothea(levels=c("A"))
+```
+
+
+```{r}
+# Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
+filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
+unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
+```
+
+```{r}
+num.filtered.cells <- llply(filtered.objs, .fun = function(obj) nrow(obj[[]]))
+```
+
+
+```{r}
+#stop("stop")
+```
+
+```{r}
+# Let's downsample and fit the EuE samples
+indices <- 1:length(filtered.objs[grepl(names(filtered.objs), pattern="EuE")])
+names(indices) <- names(filtered.objs)[grepl(names(filtered.objs), pattern="EuE")]
+ds.size <- 1500
+num.iters <- 5
+ds.nb.fits <- 
+  llply(indices, .parallel = FALSE,
+        .fun = function(indx) { 
+          
+          ret <-
+            llply(1:num.iters,
+                  .fun = function(iter) {
+                    set.seed(iter)
+                    cat(paste0(names(filtered.objs)[indx], " iter: ", iter, "\n"))
+                    orig.obj <- filtered.objs[[indx]]
+                    ds.obj <- orig.obj[, sample(colnames(orig.obj), size = ds.size, replace=F)]
+          
+                    rds.file <- paste0(analysis_dir, "nb-fits-all-", names(filtered.objs)[indx], "-ds-", iter, ".rds")
+                    if(!file.exists(rds.file)) {
+                      fit <- suppressWarnings(GetFit(GetAssayData(ds.obj, assay="Spatial", slot="counts"), type="negbin"))
+                      saveRDS(fit, file=rds.file)
+                    }
+                    fit <- readRDS(rds.file)
+                    fit
+                  })
+          ret
+        })
+```
+
+
+```{r}
+indices <- 1:length(filtered.objs)
+names(indices) <- names(filtered.objs)
+nb.fits <- 
+  llply(indices, .parallel = FALSE,
+        .fun = function(indx) { 
+          print(names(filtered.objs)[indx])
+          rds.file <- paste0(analysis_dir, "nb-fits-all-", names(filtered.objs)[indx], ".rds")
+          if(!file.exists(rds.file)) {
+            fit <- suppressWarnings(GetFit(GetAssayData(filtered.objs[[indx]], assay="Spatial", slot="counts"), type="negbin"))
+            saveRDS(fit, file=rds.file)
+          }
+          fit <- readRDS(rds.file)
+          #fit$meanvarfit[, c("gene", "mean", "variance", "pval_ssrstd_quantile")]
+          #print(table(fit$meanvarfit$pval_ssrstd_quantile < 0.05))
+          #flag <- fit$meanvarfit$pval_ssrstd_quantile < 0.05
+          #unfit.genes <- fit$meanvarfit[flag, "gene"]
+          fit
+        })
+```
+```{r}
+nb.ordered.fit.tbls <-
+  llply(nb.fits,
+        .fun = function(fit) {
+          tbl <- fit$meanvarfit
+          tbl <- tbl[order(tbl$pval_ssrstd_quantile, decreasing=FALSE),]
+          tbl
+        })
+```
+
+
+```{r}
+# Perform normalization of counts using SCTransform (which fits a negative binomial to the count data)
+# This adds a new assay "SCT" to the returned Seurat object. That assay has slots "counts" (the corrected counts),
+# "data" (log1p(counts)), and "scale.data" (the "pearson residuals").
+# These would be accessible via GetAssayData(filtered.objs[[1]], slot = "data", assay = "SCT")
+# Running with default parameters (the most interesting of which look to be variable.features.n and/or variable.features.rv.th)
+filtered.objs <- apply.sctransform(filtered.objs)
+# glimpse(obj@assays$SCT@SCTModel.list$model1)
+
+#sct <- obj@assays$SCT@SCTModel.list$model1
+#data <- GetAssayData(obj, assay="Spatial", slot="counts")
+#sct.feats <- sct@feature.attributes
+```
+
+```{r}
+cpms <-
+  llply(filtered.objs,
+        .fun = function(obj) {
+          mat <- GetAssayData(obj, assay="Spatial", slot="counts")
+          norm.mat <- edgeR::cpm(as.matrix(mat), log=FALSE)
+          norm.mat
+        })
+```
+
+```{r}
+l.cpms <-
+  llply(filtered.objs,
+        .fun = function(obj) {
+          mat <- GetAssayData(obj, assay="Spatial", slot="counts")
+          norm.mat <- edgeR::cpm(as.matrix(mat), log=TRUE)
+          norm.mat
+        })
+```
+
+
+```{r}
+# Read in Endometrium scRNA-seq data
+read.endometrium.scrna.seq.data <- function(expr.file, cell.label.file) {
+  counts_sc <- as.data.frame(fread(expr.file))
+  rownames(counts_sc) <- counts_sc$index
+  counts_sc <- t(counts_sc[,-1])
+  
+  # Note: using "main" cell types. These are a coarse set of cell types.
+  cell_types <- read.csv(cell.label.file)
+  cell_types[[2]] <- make.names(cell_types[[2]])
+  cell_types <- setNames(cell_types[[2]], cell_types[[1]])
+  cell_types <- as.factor(cell_types) # convert to factor data type
+  
+  return(list(counts=counts_sc, cell_labels=cell_types))
+}
+```
+
+
+```{r}
+load.sc.ref <- FALSE
+rctd.prefix <- "-main"
+# Force use of fine-grained results
+#cell.label.file <- "/projects/compsci/jgeorge/USERS/somara/datasets/endometrium/endo-2022_global_celltypes.csv"
+#rctd.prefix <- "-fine"
+for(dataset in datasets) {
+  rds.output.file <- paste0(output_base_dir, "/", dataset, rctd.prefix, "-no-intersect-rctd.rds")
+  if(!file.exists(rds.output.file)) {
+    load.sc.ref <- TRUE
+  }
+}
+load.sc.ref <- TRUE
+if(load.sc.ref) {
+  
+  # Confirm that all samples are using the sample single-cell dataset
+  sc.counts.file <- dataset.info[1, "single_cell_expr"]
+  cell.label.file <- dataset.info[1, "single_cell_cell_types"]
+  #stopifnot(all(dataset.info$single_cell_expr == sc.counts.file))
+  #stopifnot(all(dataset.info$single_cell_cell_types == cell.label.file))
+
+  sc.res <- read.endometrium.scrna.seq.data(sc.counts.file, cell.label.file)
+}
+```
+
+```{r}
+cat("Fitting vst to scRNA-seq\n")
+rds.file <- paste0(analysis_dir, "vst-", "scrnaseq", ".rds")
+p_load(sctransform)
+if(!file.exists(rds.file)) {
+  umi <- as(sc.res$counts, "dgCMatrix")
+  vst_out <- vst(umi = umi, vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+#  vst.flavor='v2' set, setting model to use fixed slope and exclude poisson genes.
+  saveRDS(vst_out, file=rds.file)
+#Calculating cell attributes from input UMI matrix: log_umi
+#Total Step 1 genes: 19373
+#Total overdispersed genes: 19325
+#Excluding 48 genes from Step 1 because they are not overdispersed.
+#Variance stabilizing transformation of count matrix of size 25708 by 108497
+#Model formula is y ~ log_umi
+#Get Negative Binomial regression parameters per gene
+#Using 2000 genes, 2000 cells
+#Setting estimate of  278 genes to inf as theta_mm/theta_mle < 1e-3
+## of step1 poisson genes (variance < mean): 0
+## of low mean genes (mean < 0.001): 4356
+#Total # of Step1 poisson genes (theta=Inf; variance < mean): 285
+#Total # of poisson genes (theta=Inf; variance < mean): 4529
+#Calling offset model for all 4529 poisson genes
+#Found 373 outliers - those will be ignored in fitting/regularization step
+
+#Ignoring theta inf genes
+#Replacing fit params for 4529 poisson genes by theta=Inf
+#Setting min_variance based on median UMI:  0.04
+#Second step: Get residuals using fitted parameters for 25708 genes
+#Calculating gene attributes
+#Wall clock passed: Time difference of 8.979065 mins
+}
+vst_out <- readRDS(rds.file)
+```
+
+
+```{r}
+cat("Fitting nb to scRNA-seq\n")
+
+rds.file <- paste0(analysis_dir, "nb-fits-all-", "scrnaseq", ".rds")
+if(!file.exists(rds.file)) {
+  sc.nb.fit <- suppressWarnings(GetFit(sc.res$counts, type="negbin"))
+  saveRDS(sc.nb.fit, file=rds.file)
+}
+sc.nb.fit <- readRDS(rds.file)
+ 
+```
+
+
+```{r}
+stop("stop")
+```
+
+
+```{r}
+nms <- names(datasets)
+names(nms) <- nms
+rctds <-
+  llply(nms, .parallel = FALSE,
+        .fun = function(nm) {
+          print(nm)
+          rctd.wrapper(st.obj = filtered.objs[[nm]], sc.counts = sc.res$counts, sc.cell.types = sc.res$cell_labels, 
+                       rds.output.file = paste0(output_base_dir, "/", nm, rctd.prefix, "-no-intersect-rctd.rds"), 
+                       intersect.sc.and.st.genes = FALSE)
+        })
+```
+
+```{r}
+# Add RCTD metadata to the Seurat objects
+filtered.objs <-
+  llply(datasets, .parallel = FALSE,
+        .fun = function(nm) {
+          print(nm)
+          md.df <- format.rctd.output_(rctds[[nm]])
+          obj <- add.metadata.to.seurat.obj(filtered.objs[[nm]], md.df)
+          obj
+        })
+```
+
+```{r}
+# MISTy analysis
+p_load(mistyR)
+p_load(future)
+
+# data manipulation
+p_load(dplyr)
+p_load(purrr)
+p_load(distances)
+
+
+plan(multisession)
+p_load(tidyverse)
+setwd("/home/whitebr/local/gsl-2.5/lib/")
+
+```
+
+```{r}
+net <- get_progeny(organism = 'human', top = 100)
+
+common.genes <- Reduce(intersect, lapply(filtered.objs, function(obj) rownames(obj)))
+
+net.sub <- subset(net, target %in% common.genes)
+
+# Get ligands from omnipath
+icn <- import_intercell_network()
+icn.ligand <- subset(icn, category_intercell_source == "ligand")
+# Find the highest confident 100 ligands 
+hc.ligands <-
+  ddply(as.data.frame(icn.ligand[, c("source_genesymbol", "consensus_score_intercell_source")]),
+        .variables = c("source_genesymbol"),
+        .fun = function(df) {
+          data.frame(score = max(df$consensus_score_intercell_source))
+        })
+hc.ligands <- hc.ligands[order(hc.ligands$score, decreasing=TRUE),]
+colnames(hc.ligands) <- c("gene", "score")
+hc.ligands <- subset(hc.ligands, gene %in% common.genes)
+
+net.sub.no.ligands <- subset(net.sub, !(target %in% hc.ligands$gene))
+
+avg.max.lig.expr <- 
+  ldply(filtered.objs,
+        .fun = function(obj) {
+          vec <- apply(GetAssayData(obj, assay="Spatial", slot="counts"),1,max)[hc.ligands$gene]
+        })
+colnames(avg.max.lig.expr)[1] <- "sample"
+rownames(avg.max.lig.expr) <- avg.max.lig.expr$sample
+avg.max.lig.expr <- avg.max.lig.expr[, !(colnames(avg.max.lig.expr) %in% c("sample"))]
+sms <- colSums(avg.max.lig.expr)
+sms <- sms[order(sms, decreasing=TRUE)]
+top.ligands <- unique(c("MFGE8", names(sms)[1:35]))
+```
+
+```{r}
+all.sample.acts <-
+  llply(l.cpms,
+        .fun = function(expr) {
+          sample_acts <- run_wmean(mat=expr, net=net.sub.no.ligands, .source='source', .target='target',
+                  .mor='weight', times = 2, minsize = 5)
+        })
+```
+
+
+```{r}
+stop("misty")
+```
+
+
+```{r}
+
+sample.name <- names(filtered.objs)[1]
+for(sample.name in names(filtered.objs)) {
+  print(sample.name)
+
+  rctd.df <- format.rctd.output_(rctds[[sample.name]])
+  rctd.df <- rctd.df[, !(colnames(rctd.df) %in% c("x","y"))]
+  
+  sample_acts <- subset(all.sample.acts[[sample.name]], statistic == "wmean")[, c("source", "condition", "score")]
+  act.mat <- dcast(sample_acts, condition ~ source)
+  rownames(act.mat) <- act.mat$condition
+  act.mat <- act.mat[, !(colnames(act.mat) %in% c("condition"))]
+  colnames(act.mat) <- make.names(colnames(act.mat))
+
+  expr <- l.cpms[[sample.name]]
+  
+  obj <- filtered.objs[[sample.name]]
+  common.spots <- intersect(rownames(act.mat), colnames(expr))
+  act.mat <- act.mat[common.spots,]
+  rctd.df <- rctd.df[common.spots,]
+  obj <- obj[, common.spots]
+  expr <- expr[, common.spots]
+  
+  exclude <- apply(rctd.df, 1, function(row) any(is.na(row)))
+  
+  act.mat <- act.mat[!exclude,]
+  rctd.df <- rctd.df[!exclude,]
+  expr <- expr[, !exclude]
+  obj <- obj[, !exclude]
+  
+  pos <- obj[[]][,c("row","col")]
+
+  obj <- add.metadata.to.seurat.obj(obj, act.mat)
+
+  #tmp <- rbind(expr[rownames(expr) %in% top.ligands,], t(rctd.df))
+  tmp <- expr[rownames(expr) %in% top.ligands,]
+  ligand.expr <- tmp %>% t() %>% as_tibble(rownames = NA)
+  act.expr <- act.mat %>% as_tibble(rownames = NA)
+
+  misty.views <- create_initial_view(act.expr)
+  
+  # paraview for pathways
+  misty.views <- misty.views %>% add_paraview(pos, l = 9, zoi = 1)
+  names(misty.views)[length(misty.views)] <- "paraview.path_9"
+  misty.views[[length(misty.views)]]$abbrev <- "para.path_9"
+  
+  # paraview for ligands (and cell types)
+  # misty.views <- misty.views %>% add_views(create_view("paraview.lig_9", ligand.expr, "para.lig_9"))
+  dummy.views <- create_initial_view(ligand.expr)
+  dummy.views <- dummy.views %>% add_paraview(pos, l = 9, zoi = 0)
+  data.red <- dummy.views[["paraview.9"]]$data
+  misty.views <- misty.views %>% add_views(create_view("paraview.lig_9", data.red, "para.lig_9"))
+  
+  #dummy.views <- create_initial_view(cell.type.freq)
+  #dummy.views <- dummy.views %>% add_paraview(pos, l = 9, zoi = 0)
+  #data.red <- dummy.views[["paraview.9"]]$data
+  #misty.views <- misty.views %>% add_views(create_view("paraview.ct_9", data.red, "para.ct_9"))
+
+  res <- run_misty(misty.views, results.folder = paste0(analysis_dir, "misty-path-lig-indep-", sample.name))
+#%>% collect_results()
+}
+```
+
+
+```{r}
+ffpe.sample <- "EuE-31-235"
+ff.sample <- "EuE-31-165"
+
+#ffpe.sample <- "EuE-31-236"
+#ff.sample <- "EuE-31-164"
+```
+
+```{r}
+ffpe.obj <- filtered.objs[[ffpe.sample]]
+ff.obj <- filtered.objs[[ff.sample]]
+
+ffpe.sct <- ffpe.obj@assays$SCT@SCTModel.list$model1
+ffpe.data <- GetAssayData(ffpe.obj, assay="Spatial", slot="counts")
+ffpe.sct.feats <- ffpe.sct@feature.attributes
+
+ff.sct <- ff.obj@assays$SCT@SCTModel.list$model1
+ff.data <- GetAssayData(ff.obj, assay="Spatial", slot="counts")
+ff.sct.feats <- ff.sct@feature.attributes
+
+genes <- rownames(ffpe.data)
+names(genes) <- genes
+ffpe.cs <- colSums(ffpe.data)
+cs.cors <- llply(genes[1:10], .fun = function(gene) cor(ffpe.data[gene,], ffpe.cs))
+cs.cors <- cs.cors[order(cs.cors, decreasing=TRUE),]
+
+cs.cors <- cor(t(as.matrix(ff.data)),colSums(ff.data))
+cs.cors <- cs.cors[order(cs.cors[,1], decreasing=TRUE),]
+
+# plot(log10(sct.feats$gmean), sct.feats[, "step1_(Intercept)"])
+plot(log10(ff.sct.feats$gmean), log10(ff.sct.feats$variance))
+plot(log10(ffpe.sct.feats$gmean), ffpe.sct.feats$residual_variance)
+
+hist(colSums(ffpe.data))
+hist(colSums(ff.data))
+ 
+plot(density(log10(ffpe.sct.feats$gmean)))
+lines(density(log10(ff.sct.feats$gmean)))
+```
+
+
+```{r}
+res <- collect_results(paste0(analysis_dir, "misty-cell-path-lig-indep-", ff.sample))
+```
+```{r}
+res %>% plot_improvement_stats("gain.R2")
+res %>% plot_view_contributions()
+res %>% plot_interaction_heatmap(view = "intra")
+res %>% plot_interaction_heatmap(view = "para.lig_9")
+res %>% plot_interaction_heatmap(view = "para.path_9")
+res$importances.aggregated %>%  filter(view == "para.lig_9", Target == "Hypoxia") %>% arrange(-Importance)
+```
+
+```{r}
+my_correct_counts_for_gene <-
+function (x, umi, gene, cell_attr = x$cell_attr, scale_factor = NA, 
+    verbosity = 2, verbose = NULL, show_progress = NULL) 
+{
+    if (!is.null(verbose)) {
+        warning("The 'verbose' argument is deprecated as of v0.3. Use 'verbosity' instead. (in sctransform::vst)", 
+            immediate. = TRUE, call. = FALSE)
+        verbosity <- as.numeric(verbose)
+    }
+    if (!is.null(show_progress)) {
+        warning("The 'show_progress' argument is deprecated as of v0.3. Use 'verbosity' instead. (in sctransform::vst)", 
+            immediate. = TRUE, call. = FALSE)
+        if (show_progress) {
+            verbosity <- 2
+        }
+        else {
+            verbosity <- min(verbosity, 1)
+        }
+    }
+    regressor_data_orig <- model.matrix(as.formula(gsub("^y", 
+        "", x$model_str)), cell_attr)
+    cell_attr[, x$arguments$latent_var] <- apply(cell_attr[, 
+        x$arguments$latent_var, drop = FALSE], 2, function(x) rep(median(x), 
+        length(x)))
+    if (!is.na(scale_factor) && !is.numeric(scale_factor)) {
+        stop("`scale_factor` should be numeric")
+    }
+    if (!is.na(scale_factor)) {
+        if (verbosity > 0) {
+            message(paste("Setting log_umi for correcting counts to", 
+                scale_factor))
+        }
+        cell_attr[, "log_umi"] <- log10(scale_factor)
+    }
+    regressor_data <- model.matrix(as.formula(gsub("^y", "", 
+        x$model_str)), cell_attr)
+    genes <- rownames(umi)[rownames(umi) %in% rownames(x$model_pars_fit)]
+    bin_size <- x$arguments$bin_size
+    bin_ind <- ceiling(x = 1:length(x = genes)/bin_size)
+    max_bin <- max(bin_ind)
+    if (verbosity > 0) {
+        message("Computing corrected UMI count matrix")
+    }
+    if (verbosity > 1) {
+        pb <- txtProgressBar(min = 0, max = max_bin, style = 3)
+    }
+    corrected_data <- list()
+    i <- bin_ind[which(genes==gene)]
+#    for (i in 1:max_bin) {
+        genes_bin <- genes[bin_ind == i]
+        coefs <- x$model_pars_fit[genes_bin, -1, drop = FALSE]
+        theta <- x$model_pars_fit[genes_bin, 1]
+        mu_0 <- exp(tcrossprod(coefs, regressor_data_orig))
+        variance_0 <- mu_0 + mu_0^2/theta
+        y <- as.matrix(umi[genes_bin, , drop = FALSE])
+        pearson_residual <- (y - mu_0)/sqrt(variance_0)
+        mu <- exp(tcrossprod(coefs, regressor_data))
+        variance <- mu + mu^2/theta
+        y.res <- mu + pearson_residual * sqrt(variance)
+#        y.res <- round(y.res, 0)
+#        y.res[y.res < 0] <- 0
+#        corrected_data[[length(corrected_data) + 1]] <- make.sparse(mat = y.res)
+        if (verbosity > 1) {
+            setTxtProgressBar(pb, i)
+        }
+        return(list(coefs = coefs, theta = theta, mu_0 = mu_0, variance_0 = variance_0, y = y, pearson_residual = pearson_residual, mu = mu, variance = variance, y.res = y.res, regressor_data_orig = regressor_data_orig, regressor_data = regressor_data))
+ #   }
+    if (verbosity > 1) {
+        close(pb)
+    }
+        
+    corrected_data <- do.call(what = rbind, args = corrected_data)
+    return(corrected_data)
+}
+```
+
+```{r}
+my_hist <- function(x, xlims = c(0,30), ...) {
+  x <- x[x >= xlims[1]]
+  x <- x[x <= xlims[2]]
+  hist(x, ...)
+}
+```
+
+```{r}
+compare_vsts <- function(vst1, vst1.name, vst2, vst2.name, gene) {
+  vars <- c("coefs", "theta", "mu_0", "variance_0", "pearson_residual", "mu", "variance")
+  for(var in vars) {
+    cat(paste0(var, "\n"))
+    cat(paste0(vst1.name, "\n"))
+    if(is.null(dim(vst1[[var]]))) {
+      print(vst1[[var]][gene])
+    } else {
+      print(head(vst1[[var]][gene,]))
+    }
+    cat(paste0(vst2.name, "\n"))
+    if(is.null(dim(vst2[[var]]))) {
+      print(vst2[[var]][gene])
+    } else {
+      print(head(vst2[[var]][gene,]))
+    }
+    cat("\n")
+  }
+}
+```
+
+
+```{r}
+gene <- "ACTB"
+gene <- "EPCAM"
+for(gene in c("EPCAM", "COL1A1")) {
+
+  common.genes <- intersect(rownames(GetAssayData(filtered.objs[[ff.sample]], assay="SCT", slot="counts")),
+                            rownames(GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="counts")))
+  
+
+  ff.obj <- filtered.objs[[ff.sample]]
+  ff.vst.orig <- vst(GetAssayData(object = ff.obj, slot = "counts", assay = "Spatial"), vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+  ff.obj.subset <- ff.obj[common.genes,]
+  ff.vst.subset <- vst(GetAssayData(object = ff.obj.subset, slot = "counts", assay = "Spatial"), vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+
+
+  
+  ffpe.obj <- filtered.objs[[ffpe.sample]]
+  ffpe.obj <- ffpe.obj[common.genes,]
+  ffpe.vst <- vst(GetAssayData(object = ffpe.obj, slot = "counts", assay = "Spatial"), vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+
+  ff.obj.subset.same.ncells <- ff.obj[common.genes,1:length(Cells(ffpe.obj))]
+  ff.vst.subset.same.ncells <- vst(GetAssayData(object = ff.obj.subset.same.ncells, slot = "counts", assay = "Spatial"), vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+  
+  m <- merge(ff.vst.subset$model_pars_fit, ffpe.vst$model_pars_fit, by = "row.names")
+  # Intercepts are very similar
+  plot(m[, "(Intercept).x"], m[, "(Intercept).y"])
+  # Thetas are not
+  plot(m$theta.x, m$theta.y)
+  
+  ff.cc <- correct_counts(ff.vst.orig, GetAssayData(ff.obj, assay="Spatial", slot="counts"),verbosity=20)
+  ff.cc.subset <- correct_counts(ff.vst.subset, GetAssayData(ff.obj.subset, assay="Spatial", slot="counts"),verbosity=20)
+  ffpe.cc <- correct_counts(ffpe.vst, GetAssayData(ffpe.obj, assay="Spatial", slot="counts"),verbosity=20)
+
+  # WORKING
+  # Observation: EPCAM has zero raw counts in FFPE, but few / no zero SCT-transformed counts in FFPE
+  # Why?
+  # Confirm for x_c = 0, y_c > 0 if n0 > nc
+  
+  # Other observations:
+  # 1. Tot counts are normal in FF, but skewed in FFPE
+  # 2. mu_0 is exactly proportional to total counts. This is following Lause.
+  # 3. pearson residuals distibutions look very different
+  # 4. Given how simple the fit is, I'm not sure it makes sense to switch out the counts and cell_attrs as I do below.
+  # 5. mu_0 > 0 because mu_0 = nc * e^beta_0 and both nc and e^beta_0 are > 0
+  # 6. Very strong correlation in ffpe of gene UMI with total counts (at least for epcam), less true for ff
+  
+  # WORKING: when we use the same umis and the same cell_attrs, but use different fits,
+  # the results look very similar (ie hist(y.res.ff))
+  # Confirm this.
+  # What can we change to break this? umis? cell_attr? scale_factor?
+  # In the other direction, confirm that using the same fits, but different counts,
+  # the results look very different.
+  ff.cell_attr <- ff.vst.subset.same.ncells$cell_attr
+  ff.umi.all <- GetAssayData(ff.obj, assay="Spatial", slot="counts")
+
+  ff.umi <- GetAssayData(ff.obj.subset.same.ncells, assay="Spatial", slot="counts")
+  ff.scale_factor <- median(10^ff.cell_attr$log_umi)
+  ret.ff <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ff.umi, gene, cell_attr = ff.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+  # fit in ret.ff$coefs[gene,] and ret.ff$theta[gene] or x$model_pars_fit[gene,]
+  
+  # Substituting ffpe cell_attr, umis, and scale_factor (with ff fits)
+  ffpe.cell_attr <- ffpe.vst$cell_attr
+  ffpe.umi <- GetAssayData(ffpe.obj, assay="Spatial", slot="counts")
+  ffpe.scale_factor <- median(10^ffpe.cell_attr$log_umi)
+
+  ret.ffpe <- my_correct_counts_for_gene(ffpe.vst, ffpe.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+
+  # Substituting ffpe properties into ff
+  ######################################
+    
+  # Substituting ffpe cell_attr (with ff fits)
+  ret.ff.with.ffpe.attr <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ff.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+  
+  # Substituting ffpe cell_attr and umis (with ff fits)
+  ret.ff.with.ffpe.attr.umis <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ffpe.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  # Substituting ffpe cell_attr and scale_factor (with ff fits)
+  ret.ff.with.ffpe.attr.sf <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ff.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ffpe umis (with ff fits)
+  ret.ff.with.ffpe.umis <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ffpe.umi, gene, cell_attr = ff.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  # Substituting ffpe umis and sf (with ff fits)
+  ret.ff.with.ffpe.umis.sf <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ffpe.umi, gene, cell_attr = ff.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ffpe scale factor (with ff fits)
+  ret.ff.with.ffpe.sf <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ff.umi, gene, cell_attr = ff.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  ret.ff.with.ffpe.umis.attr.sf <- my_correct_counts_for_gene(ff.vst.subset.same.ncells, ffpe.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ff properties into ffpe
+  ######################################
+  
+  # ret.ffpe <- my_correct_counts_for_gene(ffpe.vst, ffpe.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ff cell_attr (with ffpe fits)
+  ret.ffpe.with.ff.attr <- my_correct_counts_for_gene(ffpe.vst, ffpe.umi, gene, cell_attr = ff.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+  
+  # Substituting ff cell_attr and umis (with ffpe fits)
+  ret.ffpe.with.ff.attr.umis <- my_correct_counts_for_gene(ffpe.vst, ff.umi, gene, cell_attr = ff.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ff cell_attr and scale_factor (with ffpe fits)
+  ret.ffpe.with.ff.attr.sf <- my_correct_counts_for_gene(ffpe.vst, ffpe.umi, gene, cell_attr = ff.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  # Substituting ff umis (with ffpe fits)
+  ret.ffpe.with.ff.umis <- my_correct_counts_for_gene(ffpe.vst, ff.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ffpe.scale_factor, verbosity = 0)
+
+  # Substituting ff umis and sf (with ffpe fits)
+  ret.ffpe.with.ff.umis.sf <- my_correct_counts_for_gene(ffpe.vst, ff.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  # Substituting ff scale factor (with ffpe fits)
+  ret.ffpe.with.ff.sf <- my_correct_counts_for_gene(ffpe.vst, ffpe.umi, gene, cell_attr = ffpe.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  ret.ffpe.with.ff.umis.attr.sf <- my_correct_counts_for_gene(ffpe.vst, ff.umi, gene, cell_attr = ff.cell_attr, scale_factor = ff.scale_factor, verbosity = 0)
+
+  
+  ffpe.zero.flag <- ret.ffpe$y.res[gene,] <= 0
+
+    
+  # mu0 vs counts look very different for the two
+  par(mfrow=c(1,2)) 
+  plot(ff.umi[gene,], ret.ff$mu_0[gene,])
+  abline(a=0,b=1)
+  plot(ffpe.umi[gene,], ret.ffpe$mu_0[gene,])
+  abline(a=0,b=1)
+  text(ffpe.umi[gene,ffpe.zero.flag], ret.ffpe$mu_0[gene,ffpe.zero.flag], labels="X")
+
+  # mu0 vs counts look very different for the two
+  par(mfrow=c(1,2)) 
+  plot(ff.umi[gene,], ret.ff$mu_0[gene,], xlim=c(0,10))
+  abline(a=0,b=1)
+  plot(ffpe.umi[gene,], ret.ffpe$mu_0[gene,], xlim=c(0,10))
+  abline(a=0,b=1)
+  text(ffpe.umi[gene,ffpe.zero.flag], ret.ffpe$mu_0[gene,ffpe.zero.flag], labels="X")
+  
+  
+  par(mfrow=c(1,2)) 
+  plot(ff.umi[gene,], ff.umi[gene,] - ret.ff$mu_0[gene,], xlim = c(0,10))
+  plot(ffpe.umi[gene,], ffpe.umi[gene,] - ret.ffpe$mu_0[gene,], xlim = c(0,10))
+  text(ffpe.umi[gene,ffpe.zero.flag], ffpe.umi[gene,ffpe.zero.flag] - ret.ffpe$mu_0[gene,ffpe.zero.flag], labels="X")
+
+  par(mfrow=c(1,2)) 
+  plot(ff.umi[gene,], ret.ff$pearson_residual[gene,], xlim = c(0,10))
+  plot(ffpe.umi[gene,], ret.ffpe$pearson_residual[gene,], xlim = c(0,10))
+  text(ffpe.umi[gene,ffpe.zero.flag], ret.ffpe$pearson_residual[gene,ffpe.zero.flag], labels="X")
+
+  par(mfrow=c(1,2)) 
+  plot(ff.umi[gene,], sqrt(ret.ff$variance_0[gene,]), xlim = c(0,10))
+  plot(ffpe.umi[gene,], sqrt(ret.ffpe$variance_0[gene,]), xlim = c(0,10))
+  text(ffpe.umi[gene,ffpe.zero.flag], sqrt(ret.ffpe$variance_0[gene,ffpe.zero.flag]), labels="X")
+  
+
+  par(mfrow=c(1,2)) 
+  # Original ff results look skewed
+  my_hist(ret.ff$y.res[gene,], xlims = c(-Inf,30), main = "FF orig")
+  # ff fit with ffpe umis and cell attr looks normal
+  my_hist(ret.ffpe$y.res[gene,], xlims = c(0,30), main = "FFPE orig")
+
+  # Theta for ffpe is _much_ bigger:
+  print(c(ret.ffpe$theta[gene], ret.ff$theta[gene]))
+  # Should imply variances are smaller (but also a function of mu)
+  
+  # Variance of FFPE is right-skewed, because mu_0 is right-skewed, because tot counts are right skewed
+  par(mfrow=c(1,2)) 
+  my_hist(ret.ff$variance_0[gene,], xlims = c(-Inf,30), main = "FF orig")
+  my_hist(ret.ffpe$variance_0[gene,], xlims = c(0,30), main = "FFPE orig")
+
+  par(mfrow=c(1,2))
+  hist(ret.ff$pearson_residual[gene,])
+  hist(ret.ffpe$pearson_residual[gene,])
+  
+  par(mfrow=c(1,2))
+  plot(sqrt(ret.ff$variance_0[gene,]), sqrt(ret.ff$mu_0[gene,]))
+  abline(a=0,b=1)
+  plot(sqrt(ret.ffpe$variance_0[gene,]), sqrt(ret.ffpe$mu_0[gene,]))
+  abline(a=0,b=1)
+  
+  # Pearson residual and pearson * sqrt(variance) are skeweed in ff
+  par(mfrow=c(1,2))
+  hist((ret.ff$pearson_residual[gene,] * sqrt(ret.ff$variance[gene,])))
+  hist((ret.ffpe$pearson_residual[gene,] * sqrt(ret.ffpe$variance[gene,])))
+
+  par(mfrow=c(1,2))
+  hist((ret.ff$pearson_residual[gene,] * sqrt(ret.ff$variance[gene,])) + ret.ff$mu[gene,])
+  hist((ret.ffpe$pearson_residual[gene,] * sqrt(ret.ffpe$variance[gene,])) + ret.ffpe$mu[gene,])
+  
+  par(mfrow=c(1,2))
+  plot(colSums(ff.umi), ret.ff$pearson_residual[gene,])
+  plot(colSums(ffpe.umi), ret.ffpe$pearson_residual[gene,])
+  
+  # mu and variance are the same for all cells (for all genes), though the values differ by gene.
+  # This is again a consequence of Lause, with a fixed umi count n0
+  par(mfrow=c(1,2)) 
+  hist(ret.ff$variance[gene,], main = "FF orig")
+  hist(ret.ffpe$variance[gene,], main = "FFPE orig")
+
+  par(mfrow=c(1,2)) 
+  hist(ret.ff$mu[gene,], main = "FF orig")
+  hist(ret.ffpe$mu[gene,], main = "FFPE orig")
+
+      
+  par(mfrow=c(1,2)) 
+  my_hist(ret.ff$mu_0[gene,], xlims = c(-Inf,30), main = "FF orig")
+  my_hist(ret.ffpe$mu_0[gene,], xlims = c(0,30), main = "FFPE orig")
+
+  par(mfrow=c(1,2)) 
+  hist((colSums(ff.umi)))
+  hist((colSums(ffpe.umi)))
+
+  par(mfrow=c(1,2)) 
+  hist(ret.ff$variance[gene,], main = "FF orig")
+  hist(ret.ffpe$variance[gene,], main = "FFPE orig")
+
+  
+  # Plot ff with ffpe subs
+  par(mfrow=c(3,3)) 
+  # Original ff results look skewed
+  my_hist(ret.ff$y.res[gene,], xlims = c(-Inf,30), main = "FF orig")
+  # ff fit with ffpe umis and cell attr looks normal
+  my_hist(ret.ff.with.ffpe.umis.attr.sf$y.res[gene,], xlims = c(0,30), main = "FF sub umis, attr, sf")
+
+  my_hist(ret.ff.with.ffpe.umis$y.res[gene,], xlims = c(-Inf,30), main = "FF sub umis")
+  my_hist(ret.ff.with.ffpe.attr$y.res[gene,], xlims = c(-Inf,30), main = "FF sub attr")
+  my_hist(ret.ff.with.ffpe.sf$y.res[gene,], xlims = c(-Inf,30), main = "FF sub sf")
+
+  my_hist(ret.ff.with.ffpe.attr.umis$y.res[gene,], xlims = c(-Inf,30), main = "FF sub umis, attr")
+  my_hist(ret.ff.with.ffpe.attr.sf$y.res[gene,], xlims = c(-Inf,30), main = "FF sub attr, sf")
+  my_hist(ret.ff.with.ffpe.umis.sf$y.res[gene,], xlims = c(-Inf,30), main = "FF sub umis, sf")
+
+  # Plot ffpe with ff subs  
+  par(mfrow=c(3,3)) 
+  my_hist(ret.ffpe$y.res[gene,], xlims = c(-Inf,30), main = "FFPE orig")
+  my_hist(ret.ffpe.with.ff.umis.attr.sf$y.res[gene,], xlims = c(0,30), main = "FFPE sub umis, attr, sf")
+
+  my_hist(ret.ffpe.with.ff.umis$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub umis")
+  my_hist(ret.ffpe.with.ff.attr$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub attr")
+  my_hist(ret.ffpe.with.ff.sf$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub sf")
+
+  my_hist(ret.ffpe.with.ff.attr.umis$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub umis, attr")
+  my_hist(ret.ffpe.with.ff.attr.sf$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub attr, sf")
+  my_hist(ret.ffpe.with.ff.umis.sf$y.res[gene,], xlims = c(-Inf,30), main = "FFPE sub umis, sf")
+
+  
+  
+  compare_vsts(ret.ff, "ff", ret.ff.with.ffpe.attr.umis, "ff.with.ffpe.attr.umis", gene)
+
+  par(mfrow=c(1,2))
+  hist(ret.ff$pearson_residual[gene,])
+  hist(ret.ff.with.ffpe.umis.cell_attrs$pearson_residual[gene,])
+  
+  # Plot UMIs for gene vs colsums
+  par(mfrow=c(1,2))
+  plot(ff.umi[gene,], colSums(ff.umi))
+  plot(ffpe.umi[gene,], colSums(ffpe.umi))
+
+  g <- ggplot_smooth_scatter(data.frame(x=ff.umi[gene,], y=colSums(ff.umi)), aes(x=x,y=y))
+  
+  # Plot UMIs for gene vs colsums (limit x axis)
+  par(mfrow=c(1,2))
+  plot(ff.umi[gene,], colSums(ff.umi), xlim=c(0,30))
+  plot(ffpe.umi[gene,], colSums(ffpe.umi), xlim=c(0,30))
+  
+  
+  par(mfrow=c(1,2))
+  plot(colSums(ff.umi), ff.umi[gene,])
+  plot(colSums(ffpe.umi), ffpe.umi[gene,])
+
+    
+  par(mfrow=c(1,2))
+  plot(log10(colSums(ff.umi)), ff.umi[gene,])
+  plot(log10(colSums(ffpe.umi)), ffpe.umi[gene,])
+  par(mfrow=c(1,2))
+  hist(colSums(ffpe.umi))
+  hist(colSums(ff.umi))
+
+  par(mfrow=c(1,2))
+  my_hist(log(ret.ff.with.ffpe.attr.umis$mu_0[gene,]))
+  my_hist(log(ret.ff$mu_0[gene,]))
+
+  
+  par(mfrow=c(1,2))
+  plot(colSums(ret.ff.with.ffpe.attr.umis$y), log(ret.ff.with.ffpe.attr.umis$mu_0[gene,]))
+  plot(colSums(ret.ff$y), log(ret.ff$mu_0[gene,]))
+
+  par(mfrow=c(1,2))
+  y.min.1 <- min(log(ret.ff.with.ffpe.attr.umis$mu_0[gene,]))
+  y.min.2 <- min(log(ret.ff$mu_0[gene,]))
+  y.max <- max(log(ret.ff$mu_0[gene,]))
+  plot(colSums(ret.ff.with.ffpe.attr.umis$y), log(ret.ff.with.ffpe.attr.umis$mu_0[gene,]), ylim=c(y.min.1, y.max), xlim=c(0,1000))
+  plot(colSums(ret.ff$y), log(ret.ff$mu_0[gene,]), ylim=c(y.min.2, y.max), xlim=c(0,1000))
+
+  
+    
+  ret <- my_correct_counts_for_gene(x, umi, gene, cell_attr = x$cell_attr, scale_factor = NA)
+  par(mfrow=c(1,2)) 
+  hd <- hist(y.res.ff[gene,] - min(y.res.ff[gene,]))
+  hd <- hist(y.res.ffpe[gene,] - min(y.res.ffpe[gene,]), breaks=hd$breaks)
+    
+  x <- ffpe.vst
+  umi <- GetAssayData(ffpe.obj, assay="Spatial", slot="counts")
+  cell_attr <- x$cell_attr
+  scale_factor <- median(10^ffpe.vst$cell_attr$log_umi)
+  
+  #regressor_data_orig[,2] <- regressor_data_orig.ff[1:nrow(regressor_data_orig),2] 
+    genes_bin <- genes[bin_ind == i]
+    coefs.ffpe <- x$model_pars_fit[genes_bin, -1, drop=FALSE]
+    theta.ffpe <- x$model_pars_fit[genes_bin, 1]
+    # get pearson residuals
+    mu.ffpe.0 <- exp(tcrossprod(coefs.ffpe, regressor_data_orig))
+    variance.ffpe.0 <- mu.ffpe.0 + mu.ffpe.0^2 / theta.ffpe
+    y.ffpe <- as.matrix(umi[genes_bin, , drop=FALSE])
+    pearson_residual.ffpe <- (y.ffpe - mu.ffpe.0) / sqrt(variance.ffpe.0)
+    # generate output
+    mu.ffpe <- exp(tcrossprod(coefs.ffpe, regressor_data))
+    variance.ffpe <- mu.ffpe + mu.ffpe^2 / theta.ffpe
+    y.res.ffpe <- mu.ffpe + pearson_residual.ffpe * sqrt(variance.ffpe)
+
+  
+
+  tmp <- ff.vst.subset.same.ncells
+  tmp$model_pars_fit[gene,"(Intercept)"] <- ffpe.vst$model_pars_fit[gene,"(Intercept)"]
+  tmp$model_pars_fit[gene,"theta"] <- ffpe.vst$model_pars_fit[gene,"theta"]
+  x <- tmp
+  umi <- GetAssayData(ff.obj.subset.same.ncells, assay="Spatial", slot="counts")
+  cell_attr <- x$cell_attr
+  scale_factor <- median(10^ffpe.vst$cell_attr$log_umi)
+  
+  # Try the same data (counts), but switch the params
+  # Switch the data (including counts!?), but keep the same params (here, check mm.0 distributions)
+  
+      genes_bin <- genes[bin_ind == i]
+    coefs.ff <- x$model_pars_fit[genes_bin, -1, drop=FALSE]
+    theta.ff <- x$model_pars_fit[genes_bin, 1]
+    # get pearson residuals
+    mu.ff.0 <- exp(tcrossprod(coefs.ff, regressor_data_orig))
+    variance.ff.0 <- mu.ff.0 + mu.ff.0^2 / theta.ff
+    y.ff <- as.matrix(umi[genes_bin, , drop=FALSE])
+    pearson_residual.ff <- (y.ff - mu.ff.0) / sqrt(variance.ff.0)
+    # generate output
+    mu.ff <- exp(tcrossprod(coefs.ff, regressor_data))
+    variance.ff <- mu.ff + mu.ff^2 / theta.ff
+    y.res.ff <- mu.ff + pearson_residual.ff * sqrt(variance.ff)
+
+  
+  par(mfrow=c(1,2)) 
+  hd <- hist(y.res.ff[gene,] - min(y.res.ff[gene,]))
+  hd <- hist(y.res.ffpe[gene,] - min(y.res.ffpe[gene,]), breaks=hd$breaks)
+
+    par(mfrow=c(1,2)) 
+  hd <- hist(y.res.ff[gene,])
+  hd <- hist(y.res.ffpe[gene,])
+
+  
+#  par(mfrow=c(1,2)) 
+  hd <- hist(regressor_data_orig.ffpe[,2] - min(regressor_data_orig.ffpe[,2]))
+  hd <- hist(regressor_data_orig.ff[,2] - min(regressor_data_orig.ff[,2]), breaks=hd$breaks)
+
+      
+  # This shows that subsetting genes (in FF) has little effect
+  d <- density(ff.cc[gene,])
+  plot(d)
+  lines(density(ff.cc.subset[gene,], bw=d$bw), col="green")
+  lines(density(ffpe.cc[gene,], bw=d$bw), col="blue")
+  
+  # What happens if we upsample ff
+  ff.cc.subset.up <- correct_counts(ff.vst.subset, GetAssayData(ff.obj.subset, assay="Spatial", slot="counts"),verbosity=20, scale_factor=1*median(10^ffpe.vst$cell_attr$log_umi))
+  d <- density(ff.cc[gene,])
+  plot(d)
+  lines(density(ff.cc.subset[gene,], bw=d$bw), col="green")
+  lines(density(ffpe.cc[gene,], bw=d$bw), col="blue")
+  lines(density(ff.cc.subset.up[gene,], bw=d$bw), col="red")
+
+  # What happens if we downsample ffpe  
+  ffpe.cc.down <- correct_counts(ffpe.vst, GetAssayData(ffpe.obj, assay="Spatial", slot="counts"),verbosity=20, scale_factor=1*median(10^ff.vst.subset$cell_attr$log_umi))
+  d <- density(ff.cc[gene,])
+  plot(d)
+  lines(density(ff.cc.subset[gene,], bw=d$bw), col="green")
+  lines(density(ffpe.cc[gene,], bw=d$bw), col="blue")
+  lines(density(ffpe.cc.down[gene,], bw=d$bw), col="red")
+
+  # What happens if we subsitute ffpe intercept for ff intercept (no change)
+  tmp <- ff.vst.subset
+  tmp$model_pars_fit[gene,"(Intercept)"] <- ffpe.vst$model_pars_fit[gene,"(Intercept)"]
+  ff.cc.subset.mod <- correct_counts(tmp, GetAssayData(ff.obj.subset, assay="Spatial", slot="counts"),verbosity=20)
+  d <- density(ff.cc[gene,])
+  plot(d)
+  lines(density(ff.cc.subset[gene,], bw=d$bw), col="green")
+  lines(density(ffpe.cc[gene,], bw=d$bw), col="blue")
+  lines(density(ff.cc.subset.mod[gene,], bw=d$bw), col="red")
+
+  # What happens if we subsitute ffpe theta for ff theta 
+  tmp <- ff.vst.subset
+  tmp$model_pars_fit[gene,"theta"] <- ffpe.vst$model_pars_fit[gene,"theta"]
+  ff.cc.subset.mod <- correct_counts(tmp, GetAssayData(ff.obj.subset, assay="Spatial", slot="counts"),verbosity=20, scale_factor=1*median(10^ffpe.vst$cell_attr$log_umi))
+  d <- density(ff.cc[gene,])
+  plot(d)
+  lines(density(ff.cc.subset[gene,], bw=d$bw), col="green")
+  lines(density(ffpe.cc[gene,], bw=d$bw), col="blue")
+  lines(density(ff.cc.subset.mod[gene,], bw=d$bw), col="red")
+  
+  table(ff.cc.subset[gene,]==0)
+  ff.total_umi <- colSums(GetAssayData(filtered.objs[[ff.sample]], assay="SCT", slot="counts")[common.genes,])
+  ff.total_umi.all <- colSums(GetAssayData(filtered.objs[[ff.sample]], assay="SCT", slot="counts"))
+  ffpe.total_umi <- colSums(GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="counts")[common.genes,])
+  ffpe.total_umi.all <- colSums(GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="counts"))
+  
+ffpe.median.log_umi <- median(scts[[ffpe.sample]]$cell_attr$log_umi)
+ff.median.log_umi <- median(scts[[ff.sample]]$cell_attr$log_umi)
+
+vst.out <- scts[[ffpe.sample]]
+foo <- correct_counts(vst.out, GetAssayData(filtered.objs[[ffpe.sample]], assay="Spatial", slot="counts"),verbosity=20)
+hist(GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="counts")[gene,])
+vst.out.mod <- vst.out
+# vst.out.mod$cell_attr$log_umi <- ff.median.log_umi
+#foo.mod <- correct_counts(vst.out.mod, GetAssayData(filtered.objs[[ffpe.sample]], assay="Spatial", slot="counts"),verbosity=20, scale_factor=10^ff.median.log_umi)
+foo.mod <- correct_counts(vst.out.mod, GetAssayData(filtered.objs[[ffpe.sample]], assay="Spatial", slot="counts"),verbosity=20, scale_factor=median(ff.total_umi))
+
+foo.mod2 <- correct_counts(vst.out.mod, GetAssayData(filtered.objs[[ffpe.sample]], assay="Spatial", slot="counts"),verbosity=20, scale_factor=median(ff.total_umi/2))
+
+
+ff.vst.out <- scts[[ff.sample]]
+ff.cc <- correct_counts(ff.vst.out, GetAssayData(filtered.objs[[ff.sample]], assay="Spatial", slot="counts"),verbosity=20)
+
+plot(density(ff.cc[gene,]))
+lines(density(foo[gene,], bw=0.6717), col="green")
+lines(density(foo.mod[gene,], bw=0.6717), col="blue")
+lines(density(foo.mod2[gene,], bw=0.6717), col="red")
+
+# SCT normalized counts
+ff.sct.gene <- GetAssayData(filtered.objs[[ff.sample]], assay="SCT", slot="counts")[gene,]
+ffpe.sct.gene <- GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="counts")[gene,]
+
+# SCT Pearson residuals
+ff.sct.pearson.gene <- GetAssayData(filtered.objs[[ff.sample]], assay="SCT", slot="scale.data")[gene,]
+ffpe.sct.pearson.gene <- GetAssayData(filtered.objs[[ffpe.sample]], assay="SCT", slot="scale.data")[gene,]
+
+# raw counts
+ff.raw.cnt.gene <- GetAssayData(filtered.objs[[ff.sample]], assay="Spatial", slot="counts")[gene,]
+ffpe.raw.cnt.gene <- GetAssayData(filtered.objs[[ffpe.sample]], assay="Spatial", slot="counts")[gene,]
+
+# CPMs
+ff.cpm.gene <- cpms[[ff.sample]][gene,]
+ffpe.cpm.gene <- cpms[[ffpe.sample]][gene,]
+
+
+g1 <- ggplot(data = data.frame(x = ff.raw.cnt.gene), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(Raw Counts)")) + ylab("Density") + 
+  theme(text = element_text(size = 20))
+
+g2 <- ggplot(data = data.frame(x = ff.cpm.gene), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(CPMs)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+g3 <- ggplot(data = data.frame(x = ff.sct.gene),
+             aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(SCT-xformed Counts)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+g4 <- ggplot(data = data.frame(x = ff.sct.pearson.gene),
+             aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(SCT Pearson Residuals)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+
+g.left <- plot_grid(g1, g2, g3, g4, nrow=4)
+g.left <- add.title.to.plot(g.left, paste0(ff.sample, " (Fresh Frozen)"), rel_heights=c(0.05,1), size = 20)
+
+
+g1 <- ggplot(data = data.frame(x = ffpe.raw.cnt.gene), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(Raw Counts)")) + ylab("Density") + 
+  theme(text = element_text(size = 20))
+
+g2 <- ggplot(data = data.frame(x = ffpe.cpm.gene), aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(CPMs)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+g3 <- ggplot(data = data.frame(x = ffpe.sct.gene),
+             aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(SCT-xformed Counts)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+g4 <- ggplot(data = data.frame(x = ffpe.sct.pearson.gene),
+             aes(x = x, y = ..density..)) + 
+  geom_histogram(bins = 100, colour = 1, fill = "white") + xlab(paste0(gene, "\n(SCT Pearson Residuals)")) + ylab("Density") +
+  theme(text = element_text(size = 20))
+
+g.right <- plot_grid(g1, g2, g3, g4, nrow=4)
+g.right <- add.title.to.plot(g.right, paste0(ffpe.sample, " (FFPE)"), rel_heights=c(0.05,1), size = 20)
+
+g.all <- plot_grid(g.left, g.right, nrow=1)
+
+png(paste0(plots_dir, "ffpe-vs-ff-", gene, ".png"))
+print(g.all)
+d <- dev.off()
+
+df1 <- data.frame(cell = Cells(filtered.objs[[ff.sample]]), sct = ff.sct.gene)
+df2 <- data.frame(cell = colnames(cpms[[ff.sample]]), cpm = cpms[[ff.sample]][gene,])
+df <- merge(df1, df2)
+g1 <- ggscatter(df, x = "cpm", y = "sct",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval 
+   ) + xlab(paste0(gene, " (CPMs)")) + ylab(paste0(gene, " (SCT-transformed Counts)")) +
+  stat_cor(aes(label = ..rr.label..), method = "pearson", label.x = 10, label.y = 0.9 * max(df$sct), size = 10)
+g1 <- g1 + theme(text = element_text(size = 20)) + ggtitle(paste0(ff.sample, " (Fresh Frozen)"))
+g1 <- g1 + xlim(c(0, 1.05 * max(df$cpm))) + ylim(c(0, 1.05 * max(df$sct)))
+
+df1 <- data.frame(cell = Cells(filtered.objs[[ff.sample]]), sct = ff.sct.pearson.gene)
+df2 <- data.frame(cell = colnames(cpms[[ff.sample]]), cpm = cpms[[ff.sample]][gene,])
+df <- merge(df1, df2)
+g2 <- ggscatter(df, x = "cpm", y = "sct",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval 
+   ) + xlab(paste0(gene, " (CPMs)")) + ylab(paste0(gene, " (SCT Pearson Residuals)")) +
+  stat_cor(aes(label = ..rr.label..), method = "pearson", label.x = 10, label.y = 0.9 * max(df$sct), size = 10)
+g2 <- g2 + theme(text = element_text(size = 20)) + ggtitle(paste0(ff.sample, " (Fresh Frozen)"))
+g2 <- g2 + xlim(c(0, 1.05 * max(df$cpm))) + ylim(c(0, 1.05 * max(df$sct)))
+
+
+df1 <- data.frame(cell = Cells(filtered.objs[[ffpe.sample]]), sct = ffpe.sct.gene)
+df2 <- data.frame(cell = colnames(cpms[[ffpe.sample]]), cpm = cpms[[ffpe.sample]][gene,])
+df <- merge(df1, df2)
+g3 <- ggscatter(df, x = "cpm", y = "sct",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval 
+   ) + xlab(paste0(gene, " (CPMs)")) + ylab(paste0(gene, " (SCT-transformed Counts)")) +
+  stat_cor(aes(label = ..rr.label..), method = "pearson", label.x = 10, label.y = 0.9 * max(df$sct), size = 10)
+g3 <- g3 + theme(text = element_text(size = 20)) + ggtitle(paste0(ffpe.sample, " (FFPE)"))
+g3 <- g3 + xlim(c(0, 1.05 * max(df$cpm))) + ylim(c(0, 1.05 * max(df$sct)))
+
+df1 <- data.frame(cell = Cells(filtered.objs[[ffpe.sample]]), sct = ffpe.sct.pearson.gene)
+df2 <- data.frame(cell = colnames(cpms[[ffpe.sample]]), cpm = cpms[[ffpe.sample]][gene,])
+df <- merge(df1, df2)
+g4 <- ggscatter(df, x = "cpm", y = "sct",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval 
+   ) + xlab(paste0(gene, " (CPMs)")) + ylab(paste0(gene, " (SCT Pearson Residuals)")) +
+  stat_cor(aes(label = ..rr.label..), method = "pearson", label.x = 10, label.y = 0.9 * max(df$sct), size = 10)
+g4 <- g4 + theme(text = element_text(size = 20)) + ggtitle(paste0(ffpe.sample, " (FFPE)"))
+g4 <- g4 + xlim(c(0, 1.05 * max(df$cpm))) + ylim(c(0, 1.05 * max(df$sct)))
+
+g.all <- plot_grid(g1, g2, nrow=1)
+
+png(paste0(plots_dir, "ffpe-vs-ff-correlation-", gene, ".png"), width = 2 * 480)
+print(g.all)
+d <- dev.off()
+
+}
+```
+
+
+```{r}
+stop("stop")
+```
+
+
+
+```{r}
+if(FALSE){
+for(indx in 1:length(filtered.objs)) {
+#indx <- 1
+obj <- filtered.objs[[indx]]
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+obj[["percent.ribo"]] <- PercentageFeatureSet(obj, pattern = "^RPL|^RPS")
+lst <- plot.features_(obj, features=c("percent.mt", "percent.ribo"), feature.names = c("% MT", "% Ribo"), include.hne=TRUE, include.umi.cnts=TRUE)
+g1 <- ggscatter(obj[[]], x = "nCount_Spatial", y = "percent.ribo",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval
+   )
+g1 <- g1 + stat_cor(method = "pearson", size=10, aes(label = ..rr.label..)) 
+g1 <- g1 + xlab("# UMIs") + ylab("% Ribosomal UMIs") + theme(text = element_text(size = 20))
+g2 <- ggscatter(obj[[]], x = "nCount_Spatial", y = "percent.mt",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval
+   )
+g2 <- g2 + stat_cor(method = "pearson", size=10, aes(label = ..rr.label..)) 
+g2 <- g2 + xlab("# UMIs") + ylab("% Mitochondrial UMIs") + theme(text = element_text(size = 20))
+g <- plot_grid(plotlist = c(lst, list(g2), list(g1)),nrow=3)
+sample <- names(filtered.objs)[indx]
+g <- add.title.to.plot(g, sample, rel_heights=c(0.05,1))
+cat(paste0("Cor(ribo, read cnt): ", cor(obj[[]]$percent.ribo, obj[[]]$nCount_Spatial), "\n"))
+cat(paste0("Cor(MT, read cnt): ", cor(obj[[]]$percent.mt, obj[[]]$nCount_Spatial), "\n"))
+png(paste0("mt-ribo-spatial-", sample, ".png"), width = 2 * 480, height = 3 * 480)
+print(g)
+d <- dev.off()
+}
+}
+
+```
+
+
+
+
+
+```{r}
+# net <- get_collectri(organism='human', split_complexes=FALSE)
+```
+
+```{r}
+p_load(sctransform)
+nms <- names(filtered.objs)
+names(nms) <- nms
+scts <-
+  llply(nms,
+        .fun = function(nm) {
+          obj <- filtered.objs[[nm]]
+          rds.file <- paste0(analysis_dir, "vst-", "st-", nm, ".rds")
+          #if(!file.exists(rds.file)) {
+            sct.data <- vst(GetAssayData(object = obj, slot = "counts", assay = "Spatial"), vst.flavor = "v2", verbosity = 10, return_cell_attr = TRUE)
+            saveRDS(sct.data, file=rds.file)
+          #}
+          sct.data <- readRDS(rds.file)
+        })
+```
+
+
+
+```{r}
+if(FALSE) {
+net <- read.table("/home/whitebr/dorothea-net.tsv", sep="\t", header=TRUE)
+pax8.net <- subset(net, source=="PAX8")
+# foo <- run_wmean(GetAssayData(filtered.objs[[1]], assay="Spatial"), network=pax8.net, .source="source", .target="target", .mor = "weight")
+pax8.acts <-
+  llply(filtered.objs,
+        .fun = function(obj) {
+          run_wmean(GetAssayData(obj, assay="SCT", slot="data"), network=pax8.net, .source="source", .target="target", .mor = "weight")
+        })
+}
+```
+
+```{r}
+nm <- names(filtered.objs)[4]
+obj <- filtered.objs[[nm]]
+tbl <- as.data.frame(subset(pax8.acts[[nm]], statistic == "wmean"))
+rownames(tbl) <- tbl$condition
+stopifnot(all(rownames(tbl) == colnames(GetAssayData(obj, assay="SCT", slot="data"))))
+tbl <- tbl[, c("score", "p_value")]
+colnames(tbl) <- c("pax8.wmean.score", "pax8.wmean.pval")
+obj <- add.metadata.to.seurat.obj(obj, tbl)
+plot.features(obj, features=c("pax8.wmean.score", "PAX8", "SLC34A2"))
+
+```
+
+
+
+
+```{r}
+nm <- names(filtered.objs)[4]
+obj <- filtered.objs[[nm]]
+seurat.vs <- obj
+
+# Filtering genes that are expressed in at least 5% of spots
+
+gene.expression <- GetAssayData(seurat.vs, assay = "SCT", slot="data")
+gene.expression.cnts <- GetAssayData(seurat.vs, assay = "SCT", slot="counts")
+#coverage <- rowSums(gene.expression > 0) / ncol(gene.expression)
+#slide.markers <- names(which(coverage >= 0.05))
+vars <- unlist(apply(gene.expression, 1, var))
+gene.expression <- gene.expression[vars > 0,]
+
+pops <- c("endothelial", "epithelial", "lymphocytes", "myeloid", "stromal")
+#pops <- c("endothelial", "lymphocytes", "myeloid", "stromal")
+#slide.markers <- unique(c("PAX8", "SLC34A2", pax8.net$target, pops))
+
+slide.markers <- c("PAX8", "SLC34A2")
+
+slide.markers <- slide.markers[slide.markers %in% rownames(gene.expression)]
+data <- rbind(gene.expression.cnts[slide.markers,], t(obj[[]][colnames(gene.expression),pops]))
+exclude <- apply(data, 2, function(col) any(is.na(col)))
+# data <- data[, !exclude]
+obj[["SCT"]] <- CreateAssayObject(data = data)
+obj <- obj[, !exclude]
+DefaultAssay(obj) <- "SCT"
+# obj[["Spatial"]] <- NULL
+
+slide.markers <- unique(c(slide.markers, pops))
+
+seurat.vs <- obj
+
+
+# Define assay for each view
+view.assays <- list(
+  "main" = "SCT",
+  "juxta" = "SCT"
+)
+
+# Define features for each view
+view.features <- list(
+  "main" = slide.markers,
+  "juxta" = slide.markers
+)
+
+# Define spatial context for each view
+view.types <- list(
+  "main" = "intra",
+  "juxta" = "juxta"
+)
+
+# Define additional parameters (l in the case of paraview)
+view.params <- list(
+  "main" = NULL,
+  "juxta" = NULL
+)
+
+
+misty.out <- "vignette_model_seurat"
+
+p_load(tidyverse)
+setwd("/home/whitebr/local/gsl-2.5/lib/")
+misty.results <- run_misty_seurat(
+  visium.slide = seurat.vs,
+  view.assays = view.assays,
+  view.features = view.features,
+  view.types = view.types,
+  view.params = view.params,
+  spot.ids = NULL, # Using the whole slide
+  out.alias = misty.out,
+  target.subset = c("PAX8"),
+  bypass.intra = TRUE
+)
+res <-  collect_results(misty.results)
+```
+
+```{r}
+pos <- obj[[]][,c("row","col")]
+# expr <- t(GetAssayData(obj, assay="SCT", slot="data"))
+expr <- extract_seurat_data(obj, "SCT", pos)
+misty.intra <- create_initial_view(expr)
+# misty.views <- misty.intra %>% add_paraview(pos, l = 10)
+m <- as.tibble(do.call(rbind, rep(list(colMeans(expr)),nrow(expr))))
+v <- create_view("mean", m, "mean")
+# misty.views <- misty.intra %>% add_paraview(pos, l = 10)
+misty.views <- misty.intra %>% add_views(v)
+res <- run_misty(misty.views) %>% collect_results()
+```
+
+
+```{r}
+
+res %>% plot_improvement_stats("gain.R2")
+res %>% plot_view_contributions()
+res %>% plot_interaction_heatmap(view = "intra")
+res$importances.aggregated %>% 
+  filter(view == "intra", Target == "PAX8") %>%
+  arrange(-Importance)
+SpatialFeaturePlot(seurat.vs, features = c("IGKC", "Plasma.Cells"))
+res %>% plot_interaction_heatmap(view = "para.igkc_10")
+SpatialFeaturePlot(seurat.vs, features = c("IGKC", "Endothelial"))
+SpatialFeaturePlot(seurat.vs, features = c("Plasma.Cells", "Endothelial"))
+SpatialFeaturePlot(seurat.vs, features = c("iCAFs", "Myoepithelial"))
+```
+
+
+```{r}
+stop("stop")
+```
+
+
+```{r}
+if(FALSE) {
+flag <- tnbc.cell.types %in% c("B_Cells", "CD4+ T-cells", "CD8+ T-cells", "iCAFs", "myCAFs", "imPVL")
+# flag <- tnbc.cell.types %in% c("B_Cells", "CD8+ T-cells", "iCAFs")
+conditions <- as.character(tnbc.cell.types)[flag]
+mat <- tnbc.cnts[, flag]
+names(conditions) <- colnames(mat)
+mat <- mat[rowSums(mat) > 0,]
+#norm.mat <- log1p.sf.norm(mat)
+}
+```
+
+```{r}
+if(FALSE) {
+norm.mats <- list()
+norm.mats[["log1p.sf"]] = log1p.sf.norm(mat)
+norm.mats[["tmm.cpm"]] = tmm.cpm.norm(mat)
+#norm.mats[["seurat.counts"]] = sctransform.norm.cnts(mat)
+#norm.mats[["seurat.log1p"]] = sctransform.norm.log1p(mat)
+obj <- CreateSeuratObject(mat, assay="RNA")
+obj <- apply.sctransform_(obj, assay="RNA")
+norm.mats[["seurat.counts"]] = GetAssayData(obj,assay="SCT",slot="counts")
+norm.mats[["seurat.log1p"]] = GetAssayData(obj,assay="SCT",slot="data")
+}
+```
+
+```{r}
+if(FALSE) {
+mat <- tnbc.cnts
+mat <- mat[rowSums(mat) > 0,]
+all.norm.mats <- list()
+all.norm.mats[["log1p.sf"]] = log1p.sf.norm(mat)
+gc()
+all.norm.mats[["tmm.cpm"]] = tmm.cpm.norm(mat)
+gc()
+obj <- CreateSeuratObject(mat, assay="RNA")
+obj <- apply.sctransform_(obj, assay="RNA")
+gc()
+all.norm.mats[["seurat.counts"]] = GetAssayData(obj,assay="SCT",slot="counts")
+gc()
+all.norm.mats[["seurat.log1p"]] = GetAssayData(obj,assay="SCT",slot="data")
+gc()
+rm(obj)
+rm(mat)
+gc()
+}
+```
+
+
+```{r}
+de.methods <- list()
+de.methods[["mast"]] <- mast.de.test
+de.methods[["wilcoxon"]] <- wilcoxon.de.test
+```
+
+```{r}
+#foo <- find.markers.wrapper(norm.mats, as.character(all.norm.mats), de.methods["wilcoxon"])
+```
+
+
+```{r}
+#stop("Done")
+```
+
+
+```{r}
+#wilcoxon.res <- test.de.consistency.wrapper(norm.mats, conditions, de.methods["wilcoxon"], num.iterations=10)
+#save(wilcoxon.res, file="wilcoxon.res.Rdata")
+```
+
+
+```{r}
+if(FALSE) {
+mast.res <- test.de.consistency.wrapper(norm.mats[c("seurat.log1p", "log1p.sf")], conditions, de.methods["mast"], num.iterations=10)
+save(mast.res, file="mast.res.Rdata")
+cat("Done\n")
+stop("Done")
+}
+```
+
+
+```{r}
+if(FALSE) {
+de.nms <- names(de.methods)
+names(de.nms) <- de.nms
+norm.nms <- names(norm.mats)
+names(norm.nms) <- norm.nms
+all.res <-
+  ldply(de.nms,
+        .parallel = FALSE,
+        .fun = function(de.method.name) {
+          de.method <- de.methods[[de.method.name]]
+          print(de.method.name)
+          ret <- 
+            ldply(norm.nms,
+                  .parallel = FALSE,
+                  .fun = function(norm.name) {
+                    print(norm.name)
+                    norm.mat <- norm.mats[[norm.name]]
+                    de.res <- test.de.consistency(norm.mat, conditions, de.method = de.method, num.iterations = 1)
+                    gc()
+                    de.res
+                  })
+          colnames(ret)[1] <- "norm"
+          ret
+                  
+        })
+colnames(all.res)[1] <- "de.method"
+save(all.res, file="all.res.Rdata")
+cat("Done!")
+}
+```
+
+
+```{r}
+#stop("stop")
+```
+
+
+```{r}
+#de.wilcox <- test.de.consistency(norm.mat, conditions, de.method = wilcoxon.de.test, num.iterations = 5)
+```
+
+```{r}
+#de.mast <- test.de.consistency(norm.mat, conditions, de.method = mast.de.test, num.iterations = 5)
+```
+
+```{r}
+```
+
+```{r}
+plot.mean.var <- function(cnt.mat) {
+sce <- SingleCellExperiment(assays=list(counts=cnt.mat))
+tmp <- logNormCounts(sce)
+#lcnts <- assay(tmp, "logcounts")
+dec <- modelGeneVar(tmp)
+
+fit.pbmc <- metadata(dec)
+plot(fit.pbmc$mean, fit.pbmc$var, xlab="Mean of log-expression",
+    ylab="Variance of log-expression")
+curve(fit.pbmc$trend(x), col="dodgerblue", add=TRUE, lwd=2)
+return(fit.pbmc)  
+}
+```
+
+```{r}
+calculate.tmm.and.scran.library.sizes <- function(cnt.mat) {
+  sce <- SingleCellExperiment(assays=list(counts=cnt.mat))
+  # size factors: Normalized expression values are computed by dividing the counts for each cell by the size factor for that cell. 
+  lcnts <- logNormCounts(sce)
+  scran.sf <- sizeFactors(lcnts)
+  # calcNormFactors: lib.size * norm.factors where lib.size contains the original library sizes and norm.factors is the vector of scaling factors computed by this function. 
+  tmm <- edgeR::calcNormFactors(cnt.mat)
+  list("scran.sf" = scran.sf, "tmm.sf" = tmm)
+}
+```
+
+```{r}
+#ret <- calculate.tmm.and.scran.library.sizes(GetAssayData(filtered.objs[[1]], assay="Spatial", slot="count"))
+```
+
+
+```{r}
+calculate.fracs.top.n <- function(cnt.mat) {
+  cols <- colnames(cnt.mat)
+  names(cols) <- cols
+  ret <- ldply(cols,
+               .parallel = TRUE,
+               .fun = function(col) {
+                 vec <- cnt.mat[,col]
+                 vec <- vec[order(vec, decreasing=TRUE)]
+                 cs <- cumsum(vec)
+                 tot <- sum(vec)
+                 ns <- c(1,5,10,20,50,100)
+                 nms <- paste0("frac.", ns)
+                 ret <- cs[ns]/tot
+                 names(ret) <- nms
+                 df <- t(as.data.frame(ret))
+                 rownames(df) <- NULL
+                 df
+                })
+  colnames(ret)[1] <- "id"
+  ret
+}
+
+# Exclude all zeroes
+# foo <- apply(cnt.mat, 2, rank)
+# rm <- rowMeans(foo)
+# rm <- rm[order(rm, decreasing=TRUE)]
+```
+
+
+```{r}
+if(FALSE) {
+cnt.mat <- GetAssayData(filtered.objs[[1]], assay="Spatial", slot="count")
+sce <- SingleCellExperiment(assays=list(counts=cnt.mat))
+tmp <- logNormCounts(sce)
+lcnts <- assay(tmp, "logcounts")
+dec <- modelGeneVar(tmp)
+
+fit.pbmc <- metadata(dec)
+plot(fit.pbmc$mean, fit.pbmc$var, xlab="Mean of log-expression",
+    ylab="Variance of log-expression")
+curve(fit.pbmc$trend(x), col="dodgerblue", add=TRUE, lwd=2)
+# plot(density(cnt.mat["MALAT1",]/colSums(cnt.mat)))
+}
+# To do
+# Plot TMM vs scran normalization -- library size vs norm
+# Plot TMM density
+# Plot scran norm density
+# Plot mean-var
+# Plot entropy?
+# Plot frac of genes by top n=5, 10, 20, 50, 100
+```
+
+
+```{r}
+# Use edgeR with cell detection rate as a covariate. This was a top-performing method
+# in a recent study (though by the authors)
+# See https://www.nature.com/articles/nmeth.4612
+# See the code where upon which the below is based
+# https://github.com/csoneson/conquer_comparison/blob/master/scripts/apply_edgeRQLFDetRate.R
+# NB: cond1 will be the reference.
+# This means that those genes with _negative_ logFC will be positive markers for cond1.
+# conditions: vector of cell-level conditions/labels
+find.markers.edgeRQLFDetRate <- function(raw.counts, conditions, cond1, cond2) {
+  flag <- conditions %in% c(cond1, cond2)
+  L.count <- raw.counts[, flag]
+  L.condt <- factor(conditions[flag], levels = c(cond1, cond2))
+  dge <- DGEList(L.count, group = L.condt)
+  dge <- calcNormFactors(dge)
+  cdr <- scale(colMeans(L.count > 0))
+  design <- model.matrix(~ cdr + L.condt)
+  dge <- estimateDisp(dge, design = design)
+  fit <- glmQLFit(dge, design = design)
+  qlf <- glmQLFTest(fit)
+  tt <- topTags(qlf, n = Inf)
+  cond1.flag <- conditions == cond1
+  pct.1 <- as.numeric(rowMeans(raw.counts[rownames(tt$table),cond1.flag]>0))
+  cond2.flag <- conditions == cond2
+  pct.2 <- as.numeric(rowMeans(raw.counts[rownames(tt$table),cond2.flag]>0))
+  tt$table <- cbind(tt$table, pct.1=pct.1, pct.2=pct.2)
+  tt
+}
+
+find.all.markers <- function(raw.counts, conditions, rds.output.file.prefix = NULL) {
+  uniq.conditions <- unique(conditions)
+  cond1.indices <- 1:(length(uniq.conditions)-1)
+  names(cond1.indices) <- uniq.conditions[cond1.indices]
+  llply(cond1.indices, .parallel = FALSE,
+        .fun = function(i) {
+          cat(paste0("Find markers for cell type ", i, " of ", length(uniq.conditions), ": ", uniq.conditions[i], "\n"))
+          cond2.indices <- (i+1):length(uniq.conditions)
+          names(cond2.indices) <- uniq.conditions[cond2.indices]
+          llply(cond2.indices, .parallel = FALSE,
+                .fun = function(j) {
+                  cat(paste0("Find markers for cell type ", uniq.conditions[i], 
+                             " (", i , " of ", length(uniq.conditions), ") vs ",
+                             uniq.conditions[j], " (", j , " of ", length(uniq.conditions), ")\n"))
+
+                  rds.output.file <- NULL
+                  if(!is.null(rds.output.file.prefix)) {
+                    rds.output.file <- paste0(rds.output.file.prefix, make.names(uniq.conditions[i]), "-vs-", make.names(uniq.conditions[j]), ".rds")
+                    if(file.exists(rds.output.file)) {
+                      res <- readRDS(rds.output.file)
+                      gc()
+                      return(res)
+                    }
+                  }
+                  res <- find.markers(raw.counts, conditions, cond1 = uniq.conditions[i], cond2 = uniq.conditions[j])
+                  if(!is.null(rds.output.file)) {
+                    saveRDS(res, rds.output.file)
+                  }
+                  gc()
+                  return(res)
+                })
+        })
+}
+```
+
+```{r}
+if(FALSE) {
+flag <- as.character(tnbc.cell.types) %in% c("iCAFs", "myCAFs", "B_Cells")
+# tt <- find.markers(raw.counts = tnbc.cnts, conditions = as.character(tnbc.cell.types), cond1 = "myCAFs", cond2 = "B_Cells")
+# tnbc.markers <- find.all.markers(tnbc.cnts[,flag], as.character(tnbc.cell.types)[flag])
+dir.create(paste0(analysis_dir, "/wu-scrnaseq-markers/"), showWarnings = FALSE, recursive = TRUE)
+tnbc.markers <- find.all.markers(tnbc.cnts, as.character(tnbc.cell.types), rds.output.file.prefix = paste0(analysis_dir, "/wu-scrnaseq-markers/wu-scrnaseq-markers-"))
+}
+```
+
+
+```{r}
+#stop("stop")
+```
+
+
+```{r}
+if(FALSE) {
+cpm.pb <- read.table("cpm-pb.tsv", sep="\t", header=TRUE)
+patient.df <- read.table("patient-df.tsv", sep="\t", header=TRUE)
+patient.df$label <- factor(patient.df$label)
+patient.df$batch.var <- factor(patient.df$batch.var)
+# foo <- HarmonyMatrix(as.matrix(cpm.pb[rowSums(cpm.pb) > 0,]), patient.df, "batch.var", do_pca=TRUE, npcs=10)
+foo <- HarmonyMatrix(as.matrix(cpm.pb[odg,]), patient.df, "batch.var", do_pca=TRUE, npcs=10)
+plot(foo[,1],foo[,2])
+text(foo[,1], foo[,2], patient.df$label)
+}
+
+```
+
+
 
 
 Configure variables that point to location of images and directories where analyses and plots will be stored.
 
+
 ```{r}
-datasets <- c("SC2200259_9990", "SC2200260_9990", "SC2200261_7031", "SC2200262_7031", "SC2200263_4700", "SC2200264_4700", "SC2200265_2171", "SC2200266_2171")
-names(datasets) <- datasets
+# Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
+#filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
+#unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
+```
 
-long.dataset.names <- datasets
+```{r}
+# Perform normalization of counts using SCTransform (which fits a negative binomial to the count data)
+# This adds a new assay "SCT" to the returned Seurat object. That assay has slots "counts" (the corrected counts),
+# "data" (log1p(counts)), and "scale.data" (the "pearson residuals").
+# These would be accessible via GetAssayData(filtered.objs[[1]], slot = "data", assay = "SCT")
+# Running with default parameters (the most interesting of which look to be variable.features.n and/or variable.features.rv.th)
+# filtered.objs <- apply.sctransform(filtered.objs)
+```
 
-# Extract the sample name from the datasets (i.e., foo_<sample>)
-patient <- unlist(lapply(datasets, function(str) unlist(strsplit(str, split="_"))[2]))
+```{r}
+if(FALSE) {
+cols <- llply(filtered.objs, .fun = function(obj) rowSums(GetAssayData(obj, slot="data", assay="Spatial")))
+pb <- do.call(cbind, cols)
+library(edgeR)
+cpm.pb <- cpm(pb)
+library(uwot)
+rs <- rowSums(as.matrix(cpm.pb))
+expr.genes <- names(rs)[log(rs) > 3]
+umap.pb <- umap(t(cpm.pb[expr.genes,]), scale=TRUE)
+# foo <- HarmonyMatrix(as.matrix(cpm.pb[rowSums(cpm.pb) > 0,]), patient.df, "label", do_pca=TRUE, npcs=8)
+cpm.pb <- read.table("cpm-pb.tsv", sep="\t", header=TRUE)
+patient.df <- read.table("patient-df.tsv", sep="\t", header=TRUE)
+patient.df$label <- factor(patient.df$label)
+rownames(patient.df) <- patient.df$sample
 
-patient.df <- as.data.frame(patient)
-patient.df$sample <- rownames(patient.df)
-
-samples.by.patient <- dlply(patient.df, .variables = c("patient"), .fun = function(df) df$sample)
-
-base_dir <- '/projects/compsci/jgeorge/whitebr/tnbc/'
-
+write.table(file="cpm-pb.tsv", cpm.pb, row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+write.table(file="patient-df.tsv", patient.df, row.names=TRUE, col.names=TRUE, sep="\t", quote=FALSE)
+plot(umap.pb[,1], umap.pb[,2])
+text(umap.pb[,1], umap.pb[,2], patient.df[colnames(pb),"label"])
+text(umap.pb[,1], umap.pb[,2], colames(pb))
+# TO DO
+# - note findvariablefeatures functions
+# - compute all markers for TNBC data -- use this in downstream analysis
+# - getOverdispersedGenes
+# - note that I calculated variance in log10; STdeconolve calculates log variance, what does edgeR do
+# - harmonize based on sequencing batch
+# - for example pseudo bulk
+#   - fit a gaussian -> expressed genes
+#   see plotmm: https://rdrr.io/cran/plotmm/man/plot_mix_comps_normal.html
+#   - look at overdispersed
+# - take union of all overdispersed
+# - do pca with labels
+# - do harmony with labels
+# - how do we generalize "expressed" for spots?
+odg <- getOverdispersedGenes(GetAssayData(filtered.objs[[1]], assay="Spatial")[expr.genes,], plot=TRUE)
+bar <- getOverdispersedGenes(as.matrix(cpm.pb)[expr.genes,], plot=TRUE)
+umap.pb <- umap(t(cpm.pb[odg,]), scale=TRUE)
+}
 ```
 
 
 ```{r}
+indx <- 100
+vec <- GetAssayData(filtered.objs[[1]], slot="data", assay="Spatial")[,indx]
+tbl <- table(vec)
+df <- data.frame(cnt = as.numeric(names(tbl)), freq = cumsum(as.numeric(tbl))/sum(tbl))
+plot(df$cnt[df$cnt<50], df$freq[df$cnt<50])
+tbl1 <- table(vec[vec>0])
+plot(tbl1)
+```
 
 
-# Directory holding the raw data
-spaceranger_dirs <- paste0(base_dir, long.dataset.names, "/spaceranger/")
-names(spaceranger_dirs) <- datasets
 
-# Define and create output results and plots directories
-# base_dir_antonis<-'/projects/compsci/USERS/somara/cancer-cude/qc-pilot/'
-analysis_dir <- paste0(base_dir, '/analysis/')
-dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
-plots_dir <- paste0(base_dir, '/plots/')
-dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
+```{r}
+# Run RCTD spot deconvolution
+rctds <- 
+  llply(datasets, .parallel = FALSE,
+        .fun = function(dataset) {
+          print(dataset)
+          rds.file <- paste0(analysis_dir, "/", dataset, "-rctd.rds")
+          myRCTD <- rctd.wrapper(filtered.objs[[dataset]], tnbc.cnts, tnbc.cell.types, rds.output.file = rds.file, run.rctd = TRUE, intersect.sc.and.st.genes = FALSE)
+          gc()
+          myRCTD
+        })
+```
 
-# Prefix for all output files (results and plots)
-analysis_file_prefix <- paste0("tnbc-")
+
+```{r}
+plot.gene.pop.correlation <- function(objs, rctds, sample.name, gene, pop) {
+  mat <- GetAssayData(objs[[sample.name]], slot = "data", assay = "SCT")
+  mat <- cpm(mat, log = TRUE)
+  expr.df <- data.frame(gene = as.numeric(mat[gene,]), spot = colnames(mat))
+  rctd.tbl <- format.rctd.output_(rctds[[sample.name]], normalize=FALSE)
+  rctd.df <- data.frame(pop = rctd.tbl[, pop], spot = rownames(rctd.tbl))
+  expr.df <- merge(expr.df, rctd.df)
+  return(expr.df)
+}
+```
+
+
+```{r}
+gene <- "CDKN2A"
+```
+
+
+```{r}
+# stop("stop")
+```
+
+
+```{r}
+# To do
+# Basic QC: reads, umis
+# Plot bio/tech replicates
+# Cluster bio/tech replicates (w/o batch correction)
+# Deconvolve
+# Took at senescence markers
+# Check for off by 1 in get.per.spot.saturation.stats
+# get.per.spot.saturation.stats
+```
+
+```{r}
+align.metrics <- get.all.per.spot.alignment.metrics(spaceranger_dirs, prefix = analysis_dir)
+```
+
+
+```{r}
+indices <- 1:nrow(patient.df)
+names(indices) <- patient.df$sample
+top.gs <- llply(indices, 
+                .parallel = FALSE, 
+                .fun = function(i) {
+                  sample <- patient.df[i, "sample"]
+                  short.sample <- patient.df[i, "short.sample"]
+                  patient <- patient.df[i, "patient"]
+                  status <- patient.df[i, "tissue"]
+                  title <- paste0(status, " patient: ", patient, "\n(", sample, ")")
+                  g <- plot.top.genes(as.matrix(GetAssayData(filtered.objs[[sample]], assay="Spatial", slot="counts")))
+                  g <- g + ggtitle(title)
+                })
+```
+
+```{r}
+pts <- c("1127","1330A","1863B")
+g <- plot_grid(plotlist=top.gs[patient.df$sample[patient.df$patient %in% pts]])
+png(paste0(plots_dir, "top-genes-", paste(pts,collapse="-"), ".png"), width = 2*480, height=2*480)
+print(g)
+d <- dev.off()
+
+pts <- c("2171", "4401B")
+g <- plot_grid(plotlist=top.gs[patient.df$sample[patient.df$patient %in% pts]])
+png(paste0(plots_dir, "top-genes-", paste(pts,collapse="-"), ".png"), width = 2*480, height=2*480)
+print(g)
+d <- dev.off()
+
+pts <- c("4700")
+g <- plot_grid(plotlist=top.gs[patient.df$sample[patient.df$patient %in% pts]])
+png(paste0(plots_dir, "top-genes-", paste(pts,collapse="-"), ".png"), width = 2*480, height=2*480)
+print(g)
+d <- dev.off()
+
+pts <- c("9990")
+g <- plot_grid(plotlist=top.gs[patient.df$sample[patient.df$patient %in% pts]])
+png(paste0(plots_dir, "top-genes-", paste(pts,collapse="-"), ".png"), width = 2*480, height=2*480)
+print(g)
+d <- dev.off()
+
+pts <- c("6110","6970","7031")
+g <- plot_grid(plotlist=top.gs[patient.df$sample[patient.df$patient %in% pts]])
+png(paste0(plots_dir, "top-genes-", paste(pts,collapse="-"), ".png"), width = 2*480, height=2*480)
+print(g)
+d <- dev.off()
+
+# plot.features(filtered.objs[["SC2200259_9990"]], features=c("IGKC","MT-CO2"),include.hne=TRUE)
+# plot.features(filtered.objs[["SC2300234_JP4401B"]], features=c("IGKC","CD19", "CD8B", "GZMB"))
+# plot.features(filtered.objs[["SC2300231_JP1863B"]], features=c("IGKC","CD19", "CD8B"))
+# plot.features(filtered.objs[[sample.name]], features=c("IGKC","EEF1A1", "GAPDH", "TUBB", "FTH1"),include.hne=TRUE,include.umi.cnts=TRUE)
+
+obj <- filtered.objs[["SC2300231_JP1863B"]]
+mat <- GetAssayData(obj, assay="Spatial", slot="counts")
+# norm.mat <- log1p.sf.norm(as.matrix(mat))
+norm.mat <- edgeR::cpm(as.matrix(mat), log=FALSE)
+ret <- MCPcounter.estimate(expression=norm.mat, featuresType="HUGO_symbols")
+obj <- add.metadata.to.seurat.obj(obj, t(ret))
+
+cms <- predictCMS(norm.mat)
+df.cms <- data.frame(cms = as.character(cms))
+rownames(df.cms) <- colnames(norm.mat)
+obj <- add.metadata.to.seurat.obj(obj, df.cms)
+plot.features(obj, features=c("B.lineage"))
+plot.features(obj, features=c("CD19", "CD79A", "MS4A1"))
+plot.features(obj, features=c("CD19", "CD79A", "MS4A1", "BANK1", "CD22", "CR2", "FCRL2", "PAX5"))
+plot.features(obj, features=c("CD19", "CD79A", "MS4A1", "IGKC", "B.lineage", "CD8B"))
+
+# In veins
+indx <- 10
+plot.features(filtered.objs[[indx]], features=c("IGKC"), include.umi.cnts=TRUE)
+
+indx <- 12
+plot.features(filtered.objs[[indx]], features=c("IGKC", "Epithelial"), include.umi.cnts=TRUE)
+
+indx <- 15
+plot.features(filtered.objs[[indx]], features=c("IGKC", "Epithelial"), include.umi.cnts=TRUE)
+
+indx <- 17
+plot.features(filtered.objs[[indx]], features=c("IGKC", "Epithelial"), include.umi.cnts=TRUE)
+plot.features(filtered.objs[[indx]], features=c("IGKC", "Epithelial", "EPCAM"), include.umi.cnts=TRUE)
+plot(log(mat.cpm["EPCAM",]),log(mat.cpm["IGKC",]))
+```
+
+
+```{r}
+stop("stop")
+```
+
+
+
+
+```{r}
+plot.features(filtered.objs[[11]], features=c("nCount_Spatial"),include.hne=TRUE)
+```
+
+
+
+
+```{r}
+gs <-
+  dlply(patient.df,
+        .variables = c("patient"),
+        .fun = function(df) {
+          df <- df[order(df$label),]
+          plts <- 
+            llply(1:nrow(df),
+                  .fun = function(indx) {
+                    print(df[indx,"sample"])
+                    # g <- plot.features(unfiltered.objs[[df[indx,"sample"]]], features=c("nCount_Spatial"), feature.names = c("nUMIs"), include.hne=TRUE)
+                    g <- plot.features(unfiltered.objs[[df[indx,"sample"]]], features=NULL, include.umi.cnts = TRUE, include.hne=TRUE)
+                    g <- add.title.to.plot(g, paste0("Patient: ", df[indx, "patient"], " Sample: ", df[indx, "short.sample"], "\n", df[indx, "label"]), size=24, rel_heights=c(0.1,0.4))
+                    g
+                  })
+          # plot_grid(plotlist = plts, nrow=length(plts))
+          nr <- min(2, length(plts))
+          g <- plot_grid(plotlist = plts, nrow=nr)
+          nm <- df[1, "patient"]
+          nc <- ceiling(length(plts) / nr)
+          png(paste0(plots_dir, "/", nm, "-nUMIs.png"), height = nr * 250, width = nc * 480)
+          print(g)
+          d <- dev.off()
+
+        })
+if(FALSE) {
+l_ply(names(gs),
+      .fun = function(nm) {
+        png(paste0(plots_dir, "/", nm, "-nUMIs.png"), width = 2 * 480, height = 2 * 480)
+        print(gs[[nm]])
+        d <- dev.off()
+      })
+}
+```
+
+```{r}
+tbl <- acast(patient.df, patient ~ label)
+tbl <- tbl[order(tbl[,1], tbl[,2], tbl[,3], decreasing=TRUE),]
+expt.design <- as.data.frame(tbl)
+expt.design <- apply(expt.design, 2, as.character)
+expt.design <- cbind("Patient" = rownames(tbl), expt.design)
+expt.design[expt.design == "0"] <- ""
+png(paste0(plots_dir, "/tnbc-expt-design.png"), height = 0.5 * 480)
+grid.table(expt.design)
+d <- dev.off()
+
 ```
 
 
@@ -161,37 +2118,6 @@ get.wsi.dimensions <- function(wsi.file) {
 ```
 
 
-```{r}
-# Directory holding the scRNA-seq data to be used for deconvolution
-scrnaseq_dir <- paste0("/projects/compsci/jgeorge/whitebr/tnbc/external/wu-emboj/")
-scrnaseq_cnt_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_count_matrix_sparse.mtx")
-scrnaseq_gene_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_genes.tsv")
-scrnaseq_barcode_file <- paste0(scrnaseq_dir, "Wu_EMBOJ_barcodes.tsv")
-scrnaseq_metadata_file <- paste0(scrnaseq_dir, "Wu_EMBO_metadata.csv")
-```
-
-```{r}
-tnbc.cnts <- Matrix::readMM(scrnaseq_cnt_file)
-tnbc.genes <- read.table(scrnaseq_gene_file, sep="\t", header=FALSE)
-tnbc.barcodes <- read.table(scrnaseq_barcode_file, sep="\t", header=FALSE)
-rownames(tnbc.cnts) <- tnbc.genes$V1
-colnames(tnbc.cnts) <- tnbc.barcodes$V1
-tnbc.metadata <- read.table(scrnaseq_metadata_file, sep=",", header=TRUE)
-# Row first row, which is just the type of each column
-tnbc.metadata <- tnbc.metadata[-1,]
-tnbc.cell.types <- tnbc.metadata$celltype_final
-tnbc.cell.types <- as.factor(tnbc.cell.types)
-names(tnbc.cell.types) <- tnbc.metadata$NAME
-tnbc.cell.types <- tnbc.cell.types[colnames(tnbc.cnts)]
-```
-
-
-
-```{r}
-# Read in the filtered and unfiltered matrices and append the tissue positions information to the metadata:
-filtered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = TRUE)
-unfiltered.objs <- create.visium.seurat.objects(spaceranger_dirs, filter.spots = FALSE)
-```
 
 ```{r}
 stop("stop")
@@ -226,52 +2152,8 @@ d <- dev.off()
 
 
 ```{r}
-# Run RCTD spot deconvolution
-rctds <- 
-  llply(datasets, .parallel = FALSE,
-        .fun = function(dataset) {
-          print(dataset)
-          rds.file <- paste0(analysis_dir, "/", dataset, "-rctd.rds")
-          if(!file.exists(rds.file)) {
-            obj <- filtered.objs[[dataset]]
-            st.counts <- GetAssayData(obj, assay="Spatial", slot="counts")
-            st.coords <- obj[[]][, c("col", "row")]
-            colnames(st.coords) <- c("x","y")
-            nUMI <- colSums(st.counts) # In this case, total counts per pixel is nUMI
-            puck <- SpatialRNA(st.coords, st.counts, nUMI)
-            #barcodes <- colnames(puck@counts) # pixels to be used (a list of barcode names). 
-            #plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), 
-            #                     title ='plot of nUMI') 
-            reference <- Reference(tnbc.cnts, tnbc.cell.types)
-            myRCTD <- create.RCTD(puck, reference, max_cores = (num.cores-1))
-            myRCTD <- suppressPackageStartupMessages(run.RCTD(myRCTD, doublet_mode = 'full'))
-            saveRDS(myRCTD, rds.file)
-          }
-          cat(paste0("Reading ", rds.file, "\n"))
-          myRCTD <- readRDS(rds.file)
-          gc()
-          myRCTD
-        })
-```
 
-```{r}
 
-# Return a dataframe where each row corresponds to a spot,
-# its barcode is the rowname, its position is in the x and y columns,
-# and its normalized weights are in the remaining columns, named
-# according to the corresponding cell type.
-format.rctd.output <- function(rctd) {
-  df <- format.rctd.output_(rctd, normalize = FALSE)
-  df$Stromal <- apply(df[, c("dPVL", "imPVL", "iCAFs", "myCAFs")], 1, function(row) sum(row))
-  df$T_Cells <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells")], 1, function(row) sum(row))
-  df$Immune <- apply(df[, c("CD4+ T-cells", "CD8+ T-cells", "T_cells_unassigned", "T-cells Cycling", "T-Regs", "Tfh cells", "B_Cells", "NK cells", "NKT cells", "Plasma_Cells")], 1, function(row) sum(row))
-  df$Epithelial <- apply(df[, c("Epithelial_Basal", "Epithelial_Basal_Cycling")], 1, function(row) sum(row))
-  cell.types <- c("dPVL", "imPVL")
-  df$PVL <- apply(df[, cell.types], 1, function(row) sum(row))
-  cell.types <- c("iCAFs", "myCAFs")
-  df$CAF <- apply(df[, cell.types], 1, function(row) sum(row))
-  df
-}
 
 # Find mixed spots including the two co-localized cell types A and B.
 # Such spots should have fractional A content >= min.cell.type.a and similarly for B and
@@ -349,18 +2231,118 @@ plot(density(pmin(df[, c("Epithelial_Basal_Cycling")], df[, c("iCAFs")])))
 # what is depth of these ligands / receptors in published data
 ```
 
-
 ```{r}
-# Add RCTD metadata to the Seurat objects
-filtered.objs <-
-  llply(datasets, .parallel = FALSE,
+l_ply(datasets, .parallel = FALSE,
         .fun = function(nm) {
           print(nm)
           md.df <- format.rctd.output(rctds[[nm]])
-          obj <- add.metadata.to.seurat.obj(filtered.objs[[nm]], md.df)
-          obj
+          md.df <- md.df[, !(colnames(md.df) %in% c("x", "y"))]
+          write.table(md.df, file = paste0(analysis_dir, "/", nm, "-rctd.tsv"), row.names = TRUE, col.names = TRUE, quote = FALSE, sep = "\t")
         })
 ```
+
+
+
+
+
+```{r}
+# MISTy analysis
+p_load(mistyR)
+p_load(future)
+
+# data manipulation
+p_load(dplyr)
+p_load(purrr)
+p_load(distances)
+
+
+plan(multisession)
+
+sample.name <- "SC2200259_9990"
+obj <- filtered.objs[[sample.name]]
+# rctd.df <- format.rctd.output(rctds[[sample.name]])
+rctd.df <- format.rctd.output_(rctds[[sample.name]])
+rctd.df <- rctd.df[, !(colnames(rctd.df) %in% c("x", "y"))]
+obj <- add.metadata.to.seurat.obj(obj, rctd.df)
+p_load(sctransform)
+sct.data <- vst(GetAssayData(
+  object = obj,
+  slot = "counts",
+  assay = "Spatial"
+),
+verbosity = 0
+)
+
+colnames(rctd.df) <- make.names(colnames(rctd.df))
+colnames(rctd.df) <- gsub(colnames(rctd.df), pattern="_", replacement=".")
+obj[["SCT"]] <- CreateAssayObject(data = rbind(sct.data$y, t(rctd.df)))
+
+seurat.vs <- obj
+
+# Filtering genes that are expressed in at least 5% of spots
+
+gene.expression <- GetAssayData(seurat.vs, assay = "SCT")
+coverage <- rowSums(gene.expression > 0) / ncol(gene.expression)
+slide.markers <- names(which(coverage >= 0.05))
+
+slide.markers <- c("IGKC", colnames(rctd.df))
+
+# Define assay for each view
+view.assays <- list(
+  "main" = "SCT",
+  "para.igkc" = "SCT"
+)
+
+# Define features for each view
+view.features <- list(
+  "main" = slide.markers,
+  "para.igkc" = slide.markers
+)
+
+# Define spatial context for each view
+view.types <- list(
+  "main" = "intra",
+  "para.igkc" = "para"
+)
+
+# Define additional parameters (l in the case of paraview)
+view.params <- list(
+  "main" = NULL,
+  "para.igkc" = 10
+)
+
+misty.out <- "vignette_model_seurat"
+
+p_load(tidyverse)
+setwd("/home/whitebr/local/gsl-2.5/lib/")
+misty.results <- run_misty_seurat(
+  visium.slide = seurat.vs,
+  view.assays = view.assays,
+  view.features = view.features,
+  view.types = view.types,
+  view.params = view.params,
+  spot.ids = NULL, # Using the whole slide
+  out.alias = misty.out
+)
+```
+
+```{r}
+res <-  collect_results(misty.results)
+res %>% plot_improvement_stats("gain.R2")
+res %>% plot_view_contributions()
+res %>% plot_interaction_heatmap(view = "intra")
+res$importances.aggregated %>% 
+  filter(view == "intra", Target == "IGKC") %>%
+  arrange(-Importance)
+SpatialFeaturePlot(seurat.vs, features = c("IGKC", "Plasma.Cells"))
+res %>% plot_interaction_heatmap(view = "para.igkc_10")
+SpatialFeaturePlot(seurat.vs, features = c("IGKC", "Endothelial"))
+SpatialFeaturePlot(seurat.vs, features = c("Plasma.Cells", "Endothelial"))
+SpatialFeaturePlot(seurat.vs, features = c("iCAFs", "Myoepithelial"))
+```
+
+
+
 
 ```{r}
 if(FALSE) {
@@ -452,36 +2434,8 @@ l_ply(datasets,
       })
 ```
 
-```{r}
-apply.sctransform_ <- function(obj, use.v2 = TRUE) {
-  obj <- PercentageFeatureSet(obj, pattern = "^MT-", col.name = "percent.mt")
-  if(use.v2) { 
-    obj <- SCTransform(obj, assay = "Spatial", vars.to.regress = c("nCount_Spatial"), verbose = FALSE, vst.flavor = "v2", method = "glmGamPoi")
-  } else {
-    obj <- SCTransform(obj, assay = "Spatial", vars.to.regress = c("nCount_Spatial"), verbose = FALSE)
-  }
-  return(obj)
-}
-
-apply.sctransform <- function(objs, use.v2 = TRUE) {
-  objs <-
-    llply(objs,
-          .fun = function(obj) {
-            apply.sctransform_(obj, use.v2 = use.v2)
-          })
-  objs
-}
-```
 
 
-```{r}
-# Perform normalization of counts using SCTransform (which fits a negative binomial to the count data)
-# This adds a new assay "SCT" to the returned Seurat object. That assay has slots "counts" (the corrected counts),
-# "data" (log1p(counts)), and "scale.data" (the "pearson residuals").
-# These would be accessible via GetAssayData(filtered.objs[[1]], slot = "data", assay = "SCT")
-# Running with default parameters (the most interesting of which look to be variable.features.n and/or variable.features.rv.th)
-filtered.objs <- apply.sctransform(filtered.objs)
-```
 
 
 ```{r}
@@ -2042,7 +3996,11 @@ calculate.population.spatial.correlation <- function(rctd, obj) {
 }
 
 ```
-
+g1 <- ggscatter(obj[[]], x = "nCount_Spatial", y = "percent.ribo",
+   add = "reg.line",  # Add regressin line
+   add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+   conf.int = TRUE # Add confidence interval
+   )
 ```{r}
 nms <- names(filtered.objs)
 names(nms) <- nms
@@ -2113,7 +4071,7 @@ lvls <- colnames(bar)
 # 1a. iCD14+ (CD14-TLR4-CD163-SIGLEC); sCD14+ (CD14-CD2-LY75)
 # 1b. CD8+CD103+CXCL13+ T cells in tumor nests
 # 3. Sort stroma vs cancer spots (whether cancer > 50%?) -- look at CD14/etc within these
-# 4. Look for T cell signalling involving CXCL13 and either myeloid or cancer cells
+# 4. Look for T cell siglling involving CXCL13 and either myeloid or cancer cells
 # 5. Look for interactions with myeloid cells
 # 6. Can we do de novo discovery? Previously was using those from publication.
 
@@ -3024,21 +4982,7 @@ subset.matrix.based.on.tissue.status <- function(obj, tissue.val, tissue.col = "
 ```
 
 ```{r}
-plot.top.genes <- function(mat, n.top = 20, highlight.genes = NULL) {
-  mat <- sweep(mat, 2, colSums(mat), "/")
-  top.genes <- get.top.genes.matrix(mat, n.top = n.top)
-  df <- melt(mat[top.genes,])
-  colnames(df) <- c("gene", "spot", "value")
-  df$gene <- factor(df$gene, levels = rev(top.genes))
-  g <- ggplot() + geom_boxplot(data = df, aes(x = gene, y = 100 * value), fill = (scales::hue_pal())(n.top)[n.top:1]) + coord_flip()
-  g <- g + ylab("% total count per cell") + xlab("")
-  g <- g + theme(text = element_text(size=20), plot.title = element_text(hjust = 0.5))
-  if(!is.null(highlight.genes)) {
-    vec_fontface <- ifelse(levels(df$gene) %in% highlight.genes,"bold","plain")
-    g <- g + theme(axis.text.y=element_text(face=vec_fontface))
-  }
-  g
-}
+
 ```
 
 

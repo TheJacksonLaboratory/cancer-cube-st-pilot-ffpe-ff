@@ -80,13 +80,380 @@ url <- "https://raw.githubusercontent.com/TheJacksonLaboratory/r_hne_image_utils
 source_url(url) # for extract.cell.info.from.hovernet.output, extract.hovernet.cell.info
 source("utils.R")
 source("plotting-utils.R")
+source("qc_pipeline/util_functions.R")
 ```
 
 Setup a parallel execution environment.
 
 ```{r}
-num.cores <- setup.parallel.environment()
+num.cores <- setup.parallel.environment(max.cores=10)
 ```
+
+```{r}
+unregister_dopar <- function() {
+  env <- foreach:::.foreachGlobals
+  rm(list=ls(name=env), pos=env)
+}
+```
+
+
+```{r}
+init.file <- '/pod/2/activities/jaxcc/CATch-project/raw-data/visium/analysis_dir/Endometrium/Endometrium.csv'
+output.dir <- '/projects/compsci/jgeorge/whitebr/cancer-cube/'
+dir.create(output.dir, recursive=TRUE)
+```
+
+```{r}
+dataset.data <- load.init.file(init.file)
+```
+
+```{r}
+source("https://raw.githubusercontent.com/saketkc/scRNA_NB_comparison/master/code/01_run_glm.R")
+```
+```{r}
+# Modified version of GetFit from
+# https://raw.githubusercontent.com/saketkc/scRNA_NB_comparison/master/code/01_run_glm.R")
+# to add parallelism (via llply)
+my.GetFit <- function(cm, ncells = dim(cm)[2], type = "poisson") {
+  cm <- cm[rowSums(cm) > 0, colSums(cm) > 0]
+  ncells <- min(ncells, dim(cm)[2])
+  total_umi <- colSums(cm)
+  if (ncells == dim(cm)[2]) {
+    # No sampling
+    sampled_cells <- colnames(cm)
+  } else {
+    sampled_cells <- dds(total_umi, colnames(cm), ncells)
+  }
+
+  cm_sampled <- cm[, sampled_cells]
+  total_umi_sampled <- colSums(cm_sampled)
+
+  genes <- rownames(cm_sampled)
+  names(genes) <- genes
+  #pvals_list <- mclapply(genes, FUN = function(gene) {
+  #  gene_umi <- as.vector(cm_sampled[gene, ])
+
+   # pvals <- RunGLM(gene_umi = gene_umi, cell_umi = total_umi_sampled, type = type)
+   # pvals
+  #}, mc.cores = mc.cores)
+#  pvals_list <- lapply(genes, FUN = 
+  pvals_list <- llply(genes, .parallel = TRUE, .fun =
+                         function(gene) {
+                           gene_umi <- as.vector(cm_sampled[gene, ])
+                           pvals <- RunGLM(gene_umi = gene_umi, cell_umi = total_umi_sampled, type = type)
+                           pvals
+                          })
+  names(pvals_list) <- genes
+
+  pvalsfit <- bind_rows(pvals_list, .id = "gene")
+  meanvar <- MeanVarFit(cm)
+  meanvar$total_gene_umi <- rowSums(cm)
+
+  meanvar$total_cell_umi <- sum(total_umi_sampled)
+  meanvar$median_cell_umi <- median(total_umi_sampled)
+  meanvar$mean_cell_umi <- mean(total_umi_sampled)
+
+  meanvarfit <- inner_join(meanvar, pvalsfit, by = "gene")
+
+  qval_cols <- c("qval_ssr_deviance", "qval_ssr_pearson", "qval_ssr_quantile", "qval_ssrstd_deviance", "qval_ssrstd_pearson", "qval_ssrstd_quantile")
+  for (qval_col in qval_cols) {
+    pval_col <- gsub("qval", "pval", qval_col)
+    meanvarfit[, qval_col] <- GetQvalues(meanvarfit[, pval_col])
+  }
+
+
+  return(list(meanvarfit = meanvarfit, cell_attr = CellSummary(cm_sampled), gene_attr = GeneSummary(cm_sampled)))
+}
+
+
+```
+
+```{r}
+filtered.objs <- dataset.data$filtered.objs
+```
+
+
+```{r}
+p.fits <- 
+  llply(1:length(filtered.objs), .parallel = FALSE,
+        .fun = function(indx) { 
+         print(names(filtered.objs)[indx])
+         fit.p <- my.GetFit(GetAssayData(filtered.objs[[indx]], assay="Spatial"), type="poisson")
+         #fit.p$meanvarfit[, c("gene", "mean", "variance", "pval_ssrstd_quantile")]
+         print(table(fit.p$meanvarfit$pval_ssrstd_quantile < 0.05))
+         flag <- fit.p$meanvarfit$pval_ssrstd_quantile < 0.05
+         non.p.genes <- fit.p$meanvarfit[flag, "gene"]
+         fit.p
+        })
+```
+
+
+```{r}
+stop("stop")
+```
+
+
+```{r}
+filtered.objs <-
+  llply(filtered.objs, .parallel = FALSE,
+        .fun = function(obj) SCTransform(obj, assay = "Spatial", verbose = TRUE))
+```
+
+
+```{r}
+# Read in Endometrium scRNA-seq data
+read.endometrium.scrna.seq.data <- function(expr.file, cell.label.file) {
+  counts_sc <- as.data.frame(fread(expr.file))
+  rownames(counts_sc) <- counts_sc$index
+  counts_sc <- t(counts_sc[,-1])
+  
+  # Note: using "main" cell types. These are a coarse set of cell types.
+  cell_types <- read.csv(cell.label.file)
+  cell_types <- setNames(cell_types[[2]], cell_types[[1]])
+  cell_types <- as.factor(cell_types) # convert to factor data type
+  
+  return(list(counts=counts_sc, cell_labels=cell_types))
+}
+```
+
+```{r}
+# Confirm that all samples are using the sample single-cell dataset
+sc.counts.file <- dataset.data$metadata[1, "single_cell_expr"]
+cell.label.file <- dataset.data$metadata[1, "single_cell_cell_types"]
+stopifnot(all(dataset.data$metadata$single_cell_expr == sc.counts.file))
+stopifnot(all(dataset.data$metadata$single_cell_cell_types == cell.label.file))
+
+sc.res <- read.endometrium.scrna.seq.data(sc.counts.file, cell.label.file)
+```
+
+
+```{r}
+indices <- 1:nrow(dataset.data$metadata)
+names(indices) <- dataset.data$metadata$names
+
+rctd.res <-
+  llply(indices, .parallel = FALSE,
+        .fun = function(i) {
+          print(dataset.data$metadata[i,"names"])
+          rctd.wrapper(st.obj = dataset.data$filtered.objs[[i]], sc.counts = sc.res$counts, sc.cell.types = sc.res$cell_labels, 
+                       rds.output.file = paste0(output.dir, "/", dataset.data$metadata[i, "names"], "-rctd.rds"))
+        })
+```
+
+```{r}
+rctd.res.no.int <-
+  llply(indices, .parallel = FALSE,
+        .fun = function(i) {
+          print(dataset.data$metadata[i,"names"])
+          rctd.wrapper(st.obj = dataset.data$filtered.objs[[i]], sc.counts = sc.res$counts, sc.cell.types = sc.res$cell_labels, 
+                       rds.output.file = paste0(output.dir, "/", dataset.data$metadata[i, "names"], "-no-intersect-rctd.rds"), intersect.sc.and.st.genes = FALSE)
+        })
+```
+
+
+```{r}
+subset.indices <- indices[c(1,3)]
+rctd.objs <-
+  llply(subset.indices, .parallel = FALSE,
+        .fun = function(i) {
+          print(dataset.data$metadata[i,"names"])
+          rctd.wrapper(st.obj = dataset.data$filtered.objs[[i]], sc.counts = sc.res$counts, sc.cell.types = sc.res$cell_labels, 
+                       rds.output.file = NULL, run.rctd = FALSE, intersect.sc.and.st.genes = TRUE)
+        })
+
+```
+
+```{r}
+rctd.objs.no.int <-
+  llply(subset.indices, .parallel = FALSE,
+        .fun = function(i) {
+          print(dataset.data$metadata[i,"names"])
+          rctd.wrapper(st.obj = dataset.data$filtered.objs[[i]], sc.counts = sc.res$counts, sc.cell.types = sc.res$cell_labels, 
+                       rds.output.file = NULL, run.rctd = FALSE, intersect.sc.and.st.genes = FALSE)
+        })
+
+```
+
+
+```{r}
+# Extract RCTD markers
+rctd.markers <-
+  llply(rctd.res.no.int,
+        .fun = function(res) res@internal_vars$gene_list_reg)
+```
+
+```{r}
+indx <- 1
+puck <- rctd.res[[indx]]@originalSpatialRNA
+config <- rctd.res[[indx]]@config
+cell_type_info <- rctd.res[[indx]]@cell_type_info$info
+
+puck <- rctd.res.no.int[[indx]]@originalSpatialRNA
+config <- rctd.res.no.int[[indx]]@config
+cell_type_info <- rctd.res.no.int[[indx]]@cell_type_info$info
+
+fc_thresh = config$fc_cutoff_reg
+expr_thresh = config$gene_cutoff_reg
+MIN_OBS = config$MIN_OBS
+
+de.genes <- get_de_genes(cell_type_info, puck, fc_thresh, expr_thresh, MIN_OBS)
+```
+
+```{r}
+# Modified version of GetFit from
+# https://raw.githubusercontent.com/saketkc/scRNA_NB_comparison/master/code/01_run_glm.R")
+# to add parallelism (via llply)
+my.GetFit <- function(cm, ncells = dim(cm)[2], type = "poisson") {
+  cm <- cm[rowSums(cm) > 0, colSums(cm) > 0]
+  ncells <- min(ncells, dim(cm)[2])
+  total_umi <- colSums(cm)
+  if (ncells == dim(cm)[2]) {
+    # No sampling
+    sampled_cells <- colnames(cm)
+  } else {
+    sampled_cells <- dds(total_umi, colnames(cm), ncells)
+  }
+
+  cm_sampled <- cm[, sampled_cells]
+  total_umi_sampled <- colSums(cm_sampled)
+
+  genes <- rownames(cm_sampled)
+  names(genes) <- genes
+  #pvals_list <- mclapply(genes, FUN = function(gene) {
+  #  gene_umi <- as.vector(cm_sampled[gene, ])
+
+   # pvals <- RunGLM(gene_umi = gene_umi, cell_umi = total_umi_sampled, type = type)
+   # pvals
+  #}, mc.cores = mc.cores)
+#  pvals_list <- lapply(genes, FUN = 
+  pvals_list <- llply(genes, .parallel = TRUE, .fun =
+                         function(gene) {
+                           gene_umi <- as.vector(cm_sampled[gene, ])
+                           pvals <- RunGLM(gene_umi = gene_umi, cell_umi = total_umi_sampled, type = type)
+                           pvals
+                          })
+  names(pvals_list) <- genes
+
+  pvalsfit <- bind_rows(pvals_list, .id = "gene")
+  meanvar <- MeanVarFit(cm)
+  meanvar$total_gene_umi <- rowSums(cm)
+
+  meanvar$total_cell_umi <- sum(total_umi_sampled)
+  meanvar$median_cell_umi <- median(total_umi_sampled)
+  meanvar$mean_cell_umi <- mean(total_umi_sampled)
+
+  meanvarfit <- inner_join(meanvar, pvalsfit, by = "gene")
+
+  qval_cols <- c("qval_ssr_deviance", "qval_ssr_pearson", "qval_ssr_quantile", "qval_ssrstd_deviance", "qval_ssrstd_pearson", "qval_ssrstd_quantile")
+  for (qval_col in qval_cols) {
+    pval_col <- gsub("qval", "pval", qval_col)
+    meanvarfit[, qval_col] <- GetQvalues(meanvarfit[, pval_col])
+  }
+
+
+  return(list(meanvarfit = meanvarfit, cell_attr = CellSummary(cm_sampled), gene_attr = GeneSummary(cm_sampled)))
+}
+
+
+```
+
+
+```{r}
+lapply(rctd.markers, length)
+source("https://raw.githubusercontent.com/saketkc/scRNA_NB_comparison/master/code/01_run_glm.R")
+p.fits <- 
+  llply(1:length(rctd.markers), .parallel = FALSE,
+        .fun = function(indx) { 
+         print(names(filtered.objs)[indx])
+         markers <- rctd.markers[[indx]]
+         fit.p <- my.GetFit(GetAssayData(filtered.objs[[indx]], assay="Spatial")[markers,], type="poisson")
+         #fit.p$meanvarfit[, c("gene", "mean", "variance", "pval_ssrstd_quantile")]
+         print(table(fit.p$meanvarfit$pval_ssrstd_quantile < 0.05))
+        })
+```
+
+
+```{r}
+# "EPCAM" %in% rctd.res[[3]]@internal_vars$gene_list_reg
+```
+
+```{r}
+fit.poisson.to.gene.count <- function(mat, gene) {
+  df <- data.frame(gene_umi = unname(mat[gene,]), total_umi = unname(colSums(mat)))
+  df <- data.frame(gene_umi = unname(mat[gene,]), total_umi = unname(colSums(mat)), log_total_umi = log(unname(colSums(mat))))
+  # Fit a Poisson distribution to gene UMIs, as described in
+  # Comparison and evaluation of statistical error models for scRNA-seq
+#  res <- glm(gene_umi ~ 1, offset = log(total_umi), family = poisson(link="log"), data = df)
+  res <- glm(gene_umi ~ 1, offset = log_total_umi, family = poisson(link="log"), data = df)
+  # res <- glm(gene_umi ~ 1, family = poisson(link="log"), data = df)
+  res
+}
+```
+
+```{r}
+gene <- "EPCAM"
+res <- fit.poisson.to.gene.count(mat, gene)
+df <- data.frame(gene_umi = unname(mat[gene,]), total_umi = unname(colSums(mat)), log_total_umi = log(unname(colSums(mat))))
+ggplot(df, aes(gene_umi)) + geom_histogram(aes(y = ..density..)) + stat_function(fun = function(x) dpois(x,lambda=exp(res$coefficients[1])))
+pred_pois <- dpois(df$gene_umi, lambda=exp(res$coefficients[1]))
+max(predict(res, newdata=df))
+```
+
+```{r}
+markers <- rctd.res[[3]]@internal_vars$gene_list_reg
+names(markers) <- markers
+```
+
+
+```{r}
+models <- 
+  llply(markers, .fun = function(gene) fit.poisson.to.gene.count(mat, gene))
+```
+
+```{r}
+calculate.glm.gof <- function(model) {
+  pchisq(sum(statmod::qresid(model)^2), df=model$df.residual, lower.tail=FALSE)
+}
+```
+
+```{r}
+gofs <- llply(models, .fun = function(model) calculate.glm.gof(model))
+gof.tbl <- data.frame(marker = names(gofs), gof = unname(unlist(gofs)))
+gof.tbl[which.max(gof.tbl$gof),]
+
+```
+
+
+```{r}
+# pchisq(sum(statmod::qresid(model)^2), df=model$df.residual, lower.tail=FALSE)
+```
+
+
+
+```{r}
+if(FALSE) {
+l_ply(indices, .parallel = FALSE,
+      .fun = function(i) {
+        obj <- rctd.res[[i]]
+        rds.output.file = paste0(output.dir, "/", dataset.data$metadata[i, "names"], "-rctd.rds")
+        saveRDS(obj, rds.output.file)
+        })
+}
+```
+
+```{r}
+filtered.objs <-
+  llply(indices, .parallel = FALSE,
+        .fun = function(i) {
+          # md.df <- format.rctd.output_(rctd.res[[i]], normalize = FALSE)
+          md.df <- format.rctd.output_(rctd.res.no.int[[i]], normalize = FALSE)
+          md.df <- md.df[, !(colnames(md.df) %in% c("x","y"))]
+          colnames(md.df) <- paste0("main.", colnames(md.df))
+          obj <- add.metadata.to.seurat.obj(dataset.data$filtered.objs[[i]], md.df)
+          obj
+        })
+```
+
 
 Configure variables that point to location of images and directories where analyses and plots will be stored.
 
@@ -707,8 +1074,14 @@ obj <- filtered.objs[[indx]]; DefaultAssay(obj) <- "SCT"; SpatialFeaturePlot(obj
 indx <- 7
 obj <- filtered.objs[[indx]]; DefaultAssay(obj) <- "SCT"; 
 # SpatialFeaturePlot(obj, features=c("PAX8", "main.epithelial", "main.stromal", "SLC34A2"), slot="counts")
+# https://journals.biologists.com/dmm/article/13/10/dmm047035/225825/Cells-expressing-PAX8-are-the-main-source-of
+# https://pubmed.ncbi.nlm.nih.gov/34244607/
+# https://www.biorxiv.org/content/10.1101/2020.10.16.339374v1.full.pdf
 # cor(GetAssayData(obj,assay="SCT",slot="counts")["PAX8",], GetAssayData(obj,assay="SCT",slot="counts")["CDKN1A",])
-
+# SLC34A2 is a target of PAX8 (identified by KO of PAX8)
+# https://elifesciences.org/articles/44306.pdf
+# PAX8 is expressed in epithelial, but not stroma cells in endometrium
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7648606/
 g <- plot.features(obj, features=c("main.epithelial", "PAX8", "SLC34A2"), feature.names = c("Epi", "PAX8", "SLC34A2"), include.hne=FALSE, legend.limits = list(c(0,1), NULL, NULL), nrow=1)
 png(paste0(plots_dir, "/", analysis_file_prefix, "pax8-slc34a2-epi-no-labels-sct-counts.png"), width = 1.4 * 480)
 print(g)
@@ -1580,6 +1953,25 @@ ffpe.only.biotypes <- get.biotypes (ffpe.only,gene_db)
 png(paste0(plots_dir,"ffpe-biotypes.png"))
 grid.table(ffpe.only.biotypes,rows=NULL)
 d <- dev.off()
+
+table <- tableGrob(d)
+
+title <- textGrob("Num Samples",gp=gpar(fontsize=50))
+footnote <- textGrob("footnote", x=0, hjust=0,
+                     gp=gpar( fontface="italic"))
+
+padding <- unit(0.5,"line")
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(title) + padding,
+                         pos = 0)
+table <- gtable_add_rows(table, 
+                         heights = grobHeight(footnote)+ padding)
+table <- gtable_add_grob(table, list(title, footnote),
+                         t=c(1, nrow(table)), l=c(1,2), 
+                         r=ncol(table))
+grid.newpage()
+grid.draw(table)
+
 ```
 
 
