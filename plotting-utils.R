@@ -6,7 +6,7 @@
 #' @param title A string title.
 #' @param size Size of title text.
 #' @return A ggplot
-add.title.to.plot <- function(g, title, size = 14, rel_heights=c(0,1)) {
+add.title.to.plot <- function(g, title, size = 14, rel_heights=c(0.1,1)) {
   g.title <- ggdraw() +  draw_label(title, size = size)
   g <- cowplot::plot_grid(title = g.title, g, nrow=2, rel_heights=rel_heights)
   g
