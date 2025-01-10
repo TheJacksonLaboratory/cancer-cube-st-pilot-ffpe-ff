@@ -20,7 +20,10 @@ add.title.to.plot <- function(g, title, size = 14, rel_heights=c(0.1,1)) {
 #' @return a ggplot
 plot.hne <- function(obj, keep.invisible.legend = FALSE) {
   # Set the opacity/alpha to 0 so that we only see the H&E image.
-  g <- SpatialFeaturePlot(obj, features = "nCount_Spatial", alpha = c(0,0))
+  ncount.feature <- grep(colnames(obj[[]]), pattern="nCount", value=TRUE)
+  stopifnot(length(ncount.feature)>0)
+  ncount.feature <- ncount.feature[1]
+  g <- SpatialFeaturePlot(obj, features = ncount.feature, alpha = c(0,0))
   # g <- g + theme(plot.title = element_text(hjust = 0.5), text = element_text(size = 15))
   if(keep.invisible.legend) {
     g <- g + theme(legend.position = "right") 
