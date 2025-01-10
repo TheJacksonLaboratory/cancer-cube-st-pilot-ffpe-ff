@@ -41,6 +41,36 @@ plot.hne <- function(obj, keep.invisible.legend = FALSE) {
   g
 }
 
+# get_legend is broken (Jan 10, 2025) as described here:
+# https://github.com/wilkelab/cowplot/issues/202
+# Below is a work-around posted there.
+get_legend2 <- function(plot, legend = NULL) {
+  if (is.ggplot(plot)) {
+    gt <- ggplotGrob(plot)
+  } else {
+    if (is.grob(plot)) {
+      gt <- plot
+    } else {
+      stop("Plot object is neither a ggplot nor a grob.")
+    }
+  }
+  pattern <- "guide-box"
+  if (!is.null(legend)) {
+    pattern <- paste0(pattern, "-", legend)
+  }
+  indices <- grep(pattern, gt$layout$name)
+  not_empty <- !vapply(
+    gt$grobs[indices], 
+    inherits, what = "zeroGrob", 
+    FUN.VALUE = logical(1)
+  )
+  indices <- indices[not_empty]
+  if (length(indices) > 0) {
+    return(gt$grobs[[indices[1]]])
+  }
+  return(NULL)
+}
+
 #' Create a panel of plots, each showing deconvolved fractions of a particular population.
 #' 
 #' @param rctd An RCTD object, from the spacexr package.
@@ -66,7 +96,7 @@ plot.population.weights <- function(rctd, pop.weights, populations, obj = NULL, 
             g <- g + ggtitle(pop) + theme(plot.title = element_text(size=title.size))
             g
           })
-  g.legend <- get_legend(plts[[1]])
+  g.legend <- get_legend2(plts[[1]])
   if(use.absolute.scale) { 
     plts <- llply(plts, .fun = function(g) g + theme(legend.position = "none"))
   }
@@ -184,7 +214,7 @@ plot.spatial <- function(obj, features = c("nCount_Spatial"), legend.name = "Rea
   }
   # g <- g + theme(legend.text = element_text(angle = 45, vjust = 1, hjust=1))
   g <- g + theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
-  g.leg <- get_legend(g) # + theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+  g.leg <- get_legend2(g) # + theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
   plot_grid(g + theme(legend.position = "none"), g.leg, nrow = 1, rel_widths = c(7,3))
   # g
 }
